@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from app.services.vector_store import add_chunks
 
 from app.services.code_service import (
     chunk_code,
@@ -36,6 +37,7 @@ def ingest_repository(repository_path: str):
             )
 
             chunks.extend(file_chunks)
+        add_chunks(chunks)
 
         return {
             "repository": repository_path,
