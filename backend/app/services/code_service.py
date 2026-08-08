@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.models.code import CodeChunk
-
+import hashlib
 
 def get_language(file_path: str) -> str:
     extension = Path(file_path).suffix.lower()
@@ -53,9 +53,18 @@ def chunk_code(
             len(lines)
         )
 
+        chunk_content = "\n".join(
+            lines[start:end]
+        )
+
+        content_hash = hashlib.sha256(
+            chunk_content.encode("utf-8")
+        ).hexdigest()
+
         chunk = CodeChunk(
             repository_id=repository_id,
-            content="\n".join(lines[start:end]),
+            content_hash=content_hash,
+            content=chunk_content,
             file_path=file_path,
             language=get_language(file_path),
             start_line=start + 1,

@@ -8,3 +8,4 @@ class CodeChunk(BaseModel):
     start_line: int
     end_line: int
     content: str
+    content_hash: str

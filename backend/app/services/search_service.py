@@ -14,3 +14,6 @@ def search_code(
     }
 )
     return results
+
+def get_language(file_path: str) -> str:
+    return file_path.split(".")[-1]

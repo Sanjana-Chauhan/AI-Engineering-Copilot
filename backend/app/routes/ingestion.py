@@ -26,27 +26,31 @@ def ingest_repository(repository_path: str):
 
         repository = Path(repository_path)
 
+        repository_id = hashlib.sha256(
+            repository_path.encode()
+        ).hexdigest()[:12]
+
         for file in files:
 
             full_path = repository / file
-            repository_id = hashlib.sha256(repository_path.encode()).hexdigest()[:12] if repository_path else ""
+
             content = read_file(str(full_path))
 
             file_chunks = chunk_code(
                 content=content,
                 file_path=file,
-                repository_id=repository_id
+                repository_id=repository_id,
             )
 
             chunks.extend(file_chunks)
-        added_chunks = add_chunks(chunks)
 
+        ingestion_stats = add_chunks(chunks)
         return {
             "repository": repository_path,
             "repository_id": repository_id,
             "file_count": len(files),
             "chunk_count": len(chunks),
-            "new_chunks_added": added_chunks
+            "ingestion": ingestion_stats
         }
 
     except (FileNotFoundError, ValueError) as error:
@@ -55,3 +59,4 @@ def ingest_repository(repository_path: str):
             status_code=400,
             detail=str(error)
         )
+        
