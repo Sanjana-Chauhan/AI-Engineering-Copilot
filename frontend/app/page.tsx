@@ -11,13 +11,15 @@ export default function Home() {
       return;
     }
 
-    const response = await fetch(
-      "http://127.0.0.1:8000/api/chat?message=" +
-        encodeURIComponent(message),
-      {
-        method: "POST",
-      }
-    );
+    const response = await fetch("http://127.0.0.1:8000/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        message: message,
+      }),
+    });
 
     const data = await response.json();
 
@@ -26,9 +28,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen p-10">
-      <h1 className="text-3xl font-bold">
-        Engineering Copilot
-      </h1>
+      <h1 className="text-3xl font-bold">Engineering Copilot</h1>
 
       <div className="mt-8 flex gap-3">
         <input
@@ -39,10 +39,7 @@ export default function Home() {
           className="border p-3"
         />
 
-        <button
-          onClick={sendMessage}
-          className="border px-4 py-2"
-        >
+        <button onClick={sendMessage} className="border px-4 py-2">
           Send
         </button>
       </div>
