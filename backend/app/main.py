@@ -5,6 +5,7 @@ from app.routes.chat import router as chat_router
 from app.routes.repository import router as repository_router
 from app.routes.ingestion import router as ingestion_router
 from app.routes.search import router as search_router
+from app.routes.rag import router as rag_router
 
 app = FastAPI(title="Engineering Copilot API")
 
@@ -25,6 +26,7 @@ app.include_router(chat_router)
 app.include_router(repository_router)
 app.include_router(ingestion_router)
 app.include_router(search_router)
+app.include_router(rag_router)
 
 
 @app.get("/")
