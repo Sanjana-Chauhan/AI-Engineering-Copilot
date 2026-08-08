@@ -13,7 +13,7 @@ client = genai.Client(api_key=api_key)
 
 def generate_response(message: str) -> str:
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+       model="gemini-3.6-flash",
         contents=message
     )
 
