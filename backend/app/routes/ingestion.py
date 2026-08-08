@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 
 from fastapi import APIRouter, HTTPException
 from app.services.vector_store import add_chunks
@@ -28,22 +29,24 @@ def ingest_repository(repository_path: str):
         for file in files:
 
             full_path = repository / file
-
+            repository_id = hashlib.sha256(repository_path.encode()).hexdigest()[:12] if repository_path else ""
             content = read_file(str(full_path))
 
             file_chunks = chunk_code(
                 content=content,
-                file_path=file
+                file_path=file,
+                repository_id=repository_id
             )
 
             chunks.extend(file_chunks)
-        add_chunks(chunks)
+        added_chunks = add_chunks(chunks)
 
         return {
             "repository": repository_path,
+            "repository_id": repository_id,
             "file_count": len(files),
             "chunk_count": len(chunks),
-            "chunks": chunks
+            "new_chunks_added": added_chunks
         }
 
     except (FileNotFoundError, ValueError) as error:

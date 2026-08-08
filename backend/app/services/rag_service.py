@@ -27,12 +27,13 @@ Code:
 
 def answer_repository_question(
     question: str,
+    repository_id: str,
     limit: int = 5
-) -> str:
-
+):
     results = search_code(
         query=question,
-        limit=limit
+        limit=limit,
+        repository_id=repository_id
     )
 
     context = build_context(results)

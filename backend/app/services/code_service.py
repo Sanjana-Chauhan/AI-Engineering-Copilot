@@ -39,7 +39,8 @@ def read_file(file_path: str) -> str:
 def chunk_code(
     content: str,
     file_path: str,
-    chunk_size: int = 50
+    chunk_size: int = 50,
+    repository_id: str = ""
 ) -> list[CodeChunk]:
 
     lines = content.splitlines()
@@ -53,6 +54,7 @@ def chunk_code(
         )
 
         chunk = CodeChunk(
+            repository_id=repository_id,
             content="\n".join(lines[start:end]),
             file_path=file_path,
             language=get_language(file_path),
