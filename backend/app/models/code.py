@@ -9,3 +9,4 @@ class CodeChunk(BaseModel):
     end_line: int
     content: str
     content_hash: str
+    score: float | None = None
