@@ -120,6 +120,46 @@ function IconSource({ className }: { className?: string }) {
   );
 }
 
+interface SseEvent {
+  event: string;
+  data: string;
+}
+
+async function* readSseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const rawEvent = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+
+      let eventType = "message";
+      const dataLines: string[] = [];
+
+      for (const line of rawEvent.split("\n")) {
+        if (line.startsWith("event:")) {
+          eventType = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          dataLines.push(line.slice(5).replace(/^ /, ""));
+        }
+      }
+
+      yield { event: eventType, data: dataLines.join("\n") };
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
+}
+
 function ThinkingDots() {
   return (
     <span className="inline-flex items-center gap-1">
@@ -231,18 +271,34 @@ export default function Home() {
     }
   }
 
+  function updateLastAssistantMessage(updater: (content: string) => string) {
+    setMessages((previous) => {
+      const next = [...previous];
+      const lastIndex = next.length - 1;
+      next[lastIndex] = {
+        role: "assistant",
+        content: updater(next[lastIndex].content),
+      };
+      return next;
+    });
+  }
+
   async function sendMessage() {
     if (!input.trim() || !repositoryId || sending) {
       return;
     }
 
     const question = input.trim();
-    setMessages((previous) => [...previous, { role: "user", content: question }]);
+    setMessages((previous) => [
+      ...previous,
+      { role: "user", content: question },
+      { role: "assistant", content: "" },
+    ]);
     setInput("");
     setSending(true);
 
     try {
-      const response = await fetch(`${API_BASE}/api/chat`, {
+      const response = await fetch(`${API_BASE}/api/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -252,19 +308,23 @@ export default function Home() {
         }),
       });
 
-      const data = await response.json();
+      if (!response.ok || !response.body) {
+        throw new Error("Chat stream request failed");
+      }
 
-      setMessages((previous) => [
-        ...previous,
-        { role: "assistant", content: data.message },
-      ]);
-      setSources(data.sources ?? []);
-      setConversationId(data.conversation_id ?? null);
+      for await (const sseEvent of readSseEvents(response.body)) {
+        if (sseEvent.event === "meta") {
+          const meta = JSON.parse(sseEvent.data);
+          setConversationId(meta.conversation_id ?? null);
+          setSources(meta.sources ?? []);
+        } else if (sseEvent.event === "token") {
+          updateLastAssistantMessage((content) => content + sseEvent.data);
+        }
+      }
     } catch {
-      setMessages((previous) => [
-        ...previous,
-        { role: "assistant", content: "Something went wrong. Please try again." },
-      ]);
+      updateLastAssistantMessage(
+        (content) => content || "Something went wrong. Please try again."
+      );
     } finally {
       setSending(false);
     }
@@ -506,43 +566,40 @@ export default function Home() {
                   </div>
                 )}
 
-                {messages.map((message, index) => (
-                  <div
-                    key={index}
-                    className={
-                      "flex items-start gap-2 " +
-                      (message.role === "user" ? "justify-end" : "justify-start")
-                    }
-                  >
-                    {message.role === "assistant" && (
-                      <div className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-cyan-400 text-white">
-                        <IconSparkle className="h-3 w-3" />
-                      </div>
-                    )}
+                {messages.map((message, index) => {
+                  const isStreamingPlaceholder =
+                    sending &&
+                    index === messages.length - 1 &&
+                    message.role === "assistant" &&
+                    message.content === "";
 
+                  return (
                     <div
+                      key={index}
                       className={
-                        "max-w-[75%] whitespace-pre-wrap px-3.5 py-2.5 text-sm leading-relaxed shadow-sm " +
-                        (message.role === "user"
-                          ? "rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent-hover text-accent-foreground"
-                          : "rounded-2xl rounded-bl-md border border-border bg-panel-muted/70 text-foreground")
+                        "flex items-start gap-2 " +
+                        (message.role === "user" ? "justify-end" : "justify-start")
                       }
                     >
-                      {message.content}
-                    </div>
-                  </div>
-                ))}
+                      {message.role === "assistant" && (
+                        <div className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-cyan-400 text-white">
+                          <IconSparkle className="h-3 w-3" />
+                        </div>
+                      )}
 
-                {sending && (
-                  <div className="flex items-end justify-start gap-2">
-                    <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-cyan-400 text-white">
-                      <IconSparkle className="h-3 w-3" />
+                      <div
+                        className={
+                          "max-w-[75%] whitespace-pre-wrap px-3.5 py-2.5 text-sm leading-relaxed shadow-sm " +
+                          (message.role === "user"
+                            ? "rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent-hover text-accent-foreground"
+                            : "rounded-2xl rounded-bl-md border border-border bg-panel-muted/70 text-foreground")
+                        }
+                      >
+                        {isStreamingPlaceholder ? <ThinkingDots /> : message.content}
+                      </div>
                     </div>
-                    <div className="rounded-2xl rounded-bl-md border border-border bg-panel-muted/70 px-3.5 py-2.5">
-                      <ThinkingDots />
-                    </div>
-                  </div>
-                )}
+                  );
+                })}
               </div>
             </main>
 

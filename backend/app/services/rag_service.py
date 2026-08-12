@@ -1,7 +1,13 @@
 from app.models.code import CodeChunk
 from app.services.conversation_service import ConversationTurn
 from app.services.search_service import search_code
-from app.services.llm_service import generate_response
+from app.services.llm_service import generate_response, generate_response_stream
+
+
+NO_CONTEXT_MESSAGE = (
+    "I couldn't find any relevant code in this repository for that question. "
+    "Make sure the repository has been ingested, or try rephrasing your question."
+)
 
 
 def build_history_block(history: list[ConversationTurn]) -> str:
@@ -38,31 +44,12 @@ Code:
     return "\n".join(context_parts)
 
 
-def answer_repository_question(
-    question: str,
-    repository_id: str,
-    history: list[ConversationTurn] | None = None,
-    limit: int = 5
-):
-    chunks = search_code(
-        query=question,
-        limit=limit,
-        repository_id=repository_id
-    )
-
-    if not chunks:
-        return {
-            "answer": (
-                "I couldn't find any relevant code in this repository for that question. "
-                "Make sure the repository has been ingested, or try rephrasing your question."
-            ),
-            "sources": []
-        }
+def build_prompt(question: str, chunks: list[CodeChunk], history: list[ConversationTurn]) -> str:
 
     context = build_context(chunks)
-    history_block = build_history_block(history or [])
+    history_block = build_history_block(history)
 
-    prompt = f"""
+    return f"""
 You are an AI Engineering Copilot.
 
 Answer the user's question using the repository context provided below.
@@ -84,9 +71,52 @@ User Question:
 {question}
 """
 
+
+def answer_repository_question(
+    question: str,
+    repository_id: str,
+    history: list[ConversationTurn] | None = None,
+    limit: int = 5
+):
+    chunks = search_code(
+        query=question,
+        limit=limit,
+        repository_id=repository_id
+    )
+
+    if not chunks:
+        return {
+            "answer": NO_CONTEXT_MESSAGE,
+            "sources": []
+        }
+
+    prompt = build_prompt(question, chunks, history or [])
     answer = generate_response(prompt)
 
     return {
         "answer": answer,
         "sources": chunks
     }
+
+
+def answer_repository_question_stream(
+    question: str,
+    repository_id: str,
+    history: list[ConversationTurn] | None = None,
+    limit: int = 5
+):
+    chunks = search_code(
+        query=question,
+        limit=limit,
+        repository_id=repository_id
+    )
+
+    if not chunks:
+        def no_context_stream():
+            yield NO_CONTEXT_MESSAGE
+
+        return [], no_context_stream()
+
+    prompt = build_prompt(question, chunks, history or [])
+
+    return chunks, generate_response_stream(prompt)
