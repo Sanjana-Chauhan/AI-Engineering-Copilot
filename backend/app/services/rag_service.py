@@ -1,6 +1,21 @@
 from app.models.code import CodeChunk
+from app.services.conversation_service import ConversationTurn
 from app.services.search_service import search_code
 from app.services.llm_service import generate_response
+
+
+def build_history_block(history: list[ConversationTurn]) -> str:
+
+    if not history:
+        return "(no previous turns)"
+
+    lines = []
+
+    for turn in history:
+        speaker = "User" if turn.role == "user" else "Assistant"
+        lines.append(f"{speaker}: {turn.content}")
+
+    return "\n".join(lines)
 
 
 def build_context(chunks: list[CodeChunk]) -> str:
@@ -26,6 +41,7 @@ Code:
 def answer_repository_question(
     question: str,
     repository_id: str,
+    history: list[ConversationTurn] | None = None,
     limit: int = 5
 ):
     chunks = search_code(
@@ -44,6 +60,7 @@ def answer_repository_question(
         }
 
     context = build_context(chunks)
+    history_block = build_history_block(history or [])
 
     prompt = f"""
 You are an AI Engineering Copilot.
@@ -55,6 +72,10 @@ Rules:
 - Do not invent files or code that are not present.
 - If the context does not contain enough information, say so.
 - Mention relevant file paths and line numbers when possible.
+- Use the conversation history to resolve follow-up references (e.g. "it", "that file", "the previous one").
+
+Conversation History:
+{history_block}
 
 Repository Context:
 {context}
