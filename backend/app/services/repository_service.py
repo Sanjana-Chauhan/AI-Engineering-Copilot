@@ -1,4 +1,13 @@
+import hashlib
+import re
+import subprocess
+import tempfile
 from pathlib import Path
+
+
+GITHUB_URL_PATTERN = re.compile(
+    r"^https://github\.com/[\w.-]+/[\w.-]+(?:\.git)?/?$"
+)
 
 
 IGNORED_DIRECTORIES = {
@@ -61,3 +70,35 @@ def scan_repository(repository_path: str) -> list[str]:
         files.append(str(relative_path))
 
     return files
+
+
+def clone_github_repository(repository_url: str) -> str:
+    if not GITHUB_URL_PATTERN.match(repository_url):
+        raise ValueError(
+            "Only GitHub URLs of the form https://github.com/<owner>/<repo> are supported."
+        )
+
+    destination = Path(tempfile.gettempdir()) / "ai-copilot-repos" / hashlib.sha256(
+        repository_url.encode()
+    ).hexdigest()[:16]
+
+    try:
+        if destination.exists():
+            subprocess.run(
+                ["git", "-C", str(destination), "pull", "--ff-only"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--", repository_url, str(destination)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+    except subprocess.CalledProcessError as error:
+        raise ValueError(f"Failed to clone repository: {error.stderr.strip()}")
+
+    return str(destination)

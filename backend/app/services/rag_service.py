@@ -1,24 +1,22 @@
+from app.models.code import CodeChunk
 from app.services.search_service import search_code
 from app.services.llm_service import generate_response
 
 
-def build_context(results) -> str:
-
-    documents = results.get("documents", [[]])[0]
-    metadatas = results.get("metadatas", [[]])[0]
+def build_context(chunks: list[CodeChunk]) -> str:
 
     context_parts = []
 
-    for document, metadata in zip(documents, metadatas):
+    for chunk in chunks:
 
         context_parts.append(
             f"""
-File: {metadata['file_path']}
-Language: {metadata['language']}
-Lines: {metadata['start_line']}-{metadata['end_line']}
+File: {chunk.file_path}
+Language: {chunk.language}
+Lines: {chunk.start_line}-{chunk.end_line}
 
 Code:
-{document}
+{chunk.content}
 """
         )
 
@@ -30,13 +28,22 @@ def answer_repository_question(
     repository_id: str,
     limit: int = 5
 ):
-    results = search_code(
+    chunks = search_code(
         query=question,
         limit=limit,
         repository_id=repository_id
     )
 
-    context = build_context(results)
+    if not chunks:
+        return {
+            "answer": (
+                "I couldn't find any relevant code in this repository for that question. "
+                "Make sure the repository has been ingested, or try rephrasing your question."
+            ),
+            "sources": []
+        }
+
+    context = build_context(chunks)
 
     prompt = f"""
 You are an AI Engineering Copilot.
@@ -56,4 +63,9 @@ User Question:
 {question}
 """
 
-    return generate_response(prompt)
+    answer = generate_response(prompt)
+
+    return {
+        "answer": answer,
+        "sources": chunks
+    }

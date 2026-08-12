@@ -1,5 +1,5 @@
-from app.models.code import CodeChunk
 from app.services.vector_store import collection
+from app.models.code import CodeChunk
 
 
 def search_code(
@@ -16,11 +16,11 @@ def search_code(
         }
     )
 
-    search_results = []
-
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     distances = results.get("distances", [[]])[0]
+
+    chunks = []
 
     for document, metadata, distance in zip(
         documents,
@@ -28,15 +28,17 @@ def search_code(
         distances
     ):
 
-        search_results.append(
-            CodeSearchResult(
+        chunks.append(
+            CodeChunk(
+                repository_id=metadata["repository_id"],
+                content_hash=metadata["content_hash"],
                 content=document,
                 file_path=metadata["file_path"],
                 language=metadata["language"],
                 start_line=metadata["start_line"],
                 end_line=metadata["end_line"],
-                score=distance
+                score=distance,
             )
         )
 
-    return search_results
+    return chunks
