@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -213,6 +213,51 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
 
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isPinnedToBottomRef = useRef(true);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+
+  const BOTTOM_PIN_THRESHOLD_PX = 64;
+
+  function handleMessagesScroll() {
+    const container = messagesContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    const pinned = distanceFromBottom <= BOTTOM_PIN_THRESHOLD_PX;
+
+    isPinnedToBottomRef.current = pinned;
+    setShowJumpToBottom(!pinned);
+  }
+
+  function scrollToBottom(behavior: ScrollBehavior) {
+    const container = messagesContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    container.scrollTo({ top: container.scrollHeight, behavior });
+    isPinnedToBottomRef.current = true;
+    setShowJumpToBottom(false);
+  }
+
+  // Runs on every message update, including each streamed token — while
+  // pinned, an instant scrollTop write keeps the view glued to the bottom
+  // without stacking up competing "smooth" animations on every token.
+  useEffect(() => {
+    if (!isPinnedToBottomRef.current) {
+      return;
+    }
+
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [messages]);
+
   function toggleDir(directory: string) {
     setExpandedDirs((previous) => {
       const next = new Set(previous);
@@ -288,6 +333,8 @@ export default function Home() {
       setMessages([]);
       setSources([]);
       setConversationId(null);
+      isPinnedToBottomRef.current = true;
+      setShowJumpToBottom(false);
     } catch (error) {
       setRepoError(
         error instanceof Error ? error.message : "Could not load that repository."
@@ -316,6 +363,8 @@ export default function Home() {
     }
 
     const question = input.trim();
+    isPinnedToBottomRef.current = true;
+    setShowJumpToBottom(false);
     setMessages((previous) => [
       ...previous,
       { role: "user", content: question },
@@ -366,6 +415,8 @@ export default function Home() {
     setMessages([]);
     setSources([]);
     setConversationId(null);
+    isPinnedToBottomRef.current = true;
+    setShowJumpToBottom(false);
   }
 
   function handleInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -574,7 +625,7 @@ export default function Home() {
             </aside>
 
             {/* Chat panel */}
-            <main className="flex flex-1 flex-col overflow-hidden">
+            <main className="relative flex flex-1 flex-col overflow-hidden">
               <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
                 <div>
                   <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -595,7 +646,11 @@ export default function Home() {
                 )}
               </div>
 
-              <div className="flex-1 space-y-4 overflow-y-auto p-5">
+              <div
+                ref={messagesContainerRef}
+                onScroll={handleMessagesScroll}
+                className="flex-1 space-y-4 overflow-y-auto p-5"
+              >
                 {messages.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
                     <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-accent to-cyan-400 text-white shadow-md shadow-accent/25">
@@ -645,6 +700,16 @@ export default function Home() {
                   );
                 })}
               </div>
+
+              {showJumpToBottom && (
+                <button
+                  onClick={() => scrollToBottom("smooth")}
+                  aria-label="Scroll to latest message"
+                  className="absolute bottom-4 left-1/2 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-panel/90 text-foreground shadow-lg backdrop-blur transition hover:border-accent/40 hover:text-accent"
+                >
+                  <IconArrowUp className="h-4 w-4 rotate-180" />
+                </button>
+              )}
             </main>
 
             {/* Sources panel */}
