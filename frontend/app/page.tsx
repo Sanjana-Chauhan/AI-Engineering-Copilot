@@ -120,6 +120,27 @@ function IconSource({ className }: { className?: string }) {
   );
 }
 
+function IconSpinner({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className}>
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        stroke="currentColor"
+        strokeWidth="3"
+        opacity="0.25"
+      />
+      <path
+        d="M21 12a9 9 0 0 0-9-9"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 interface SseEvent {
   event: string;
   data: string;
@@ -183,6 +204,7 @@ export default function Home() {
   const [files, setFiles] = useState<string[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [loadingRepo, setLoadingRepo] = useState(false);
+  const [loadingStage, setLoadingStage] = useState("");
   const [repoError, setRepoError] = useState<string | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -217,6 +239,8 @@ export default function Home() {
       let localPath = inputValue.trim();
 
       if (source === "github") {
+        setLoadingStage("Cloning repository from GitHub...");
+
         const cloneResponse = await fetch(
           `${API_BASE}/api/repository/clone?repository_url=${encodeURIComponent(
             localPath
@@ -232,6 +256,8 @@ export default function Home() {
         const cloneData = await cloneResponse.json();
         localPath = cloneData.repository_path;
       }
+
+      setLoadingStage("Scanning files and indexing code...");
 
       const [ingestResponse, scanResponse] = await Promise.all([
         fetch(

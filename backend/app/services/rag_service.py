@@ -1,6 +1,6 @@
 from app.models.code import CodeChunk
 from app.services.conversation_service import ConversationTurn
-from app.services.search_service import search_code
+from app.services.search_service import DOC_LANGUAGE, search_code
 from app.services.llm_service import generate_response, generate_response_stream
 
 
@@ -30,13 +30,16 @@ def build_context(chunks: list[CodeChunk]) -> str:
 
     for chunk in chunks:
 
+        source_label = "DOCUMENTATION" if chunk.language == DOC_LANGUAGE else "CODE"
+
         context_parts.append(
             f"""
+[{source_label}]
 File: {chunk.file_path}
 Language: {chunk.language}
 Lines: {chunk.start_line}-{chunk.end_line}
 
-Code:
+Content:
 {chunk.content}
 """
         )
@@ -56,6 +59,8 @@ Answer the user's question using the repository context provided below.
 
 Rules:
 - Use the repository context as the primary source.
+- [CODE] snippets are the authoritative source of truth about how the system actually works.
+- [DOCUMENTATION] snippets may be outdated. Use them only for high-level framing, and defer to [CODE] whenever the two disagree.
 - Do not invent files or code that are not present.
 - If the context does not contain enough information, say so.
 - Mention relevant file paths and line numbers when possible.
