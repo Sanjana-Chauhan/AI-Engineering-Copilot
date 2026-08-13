@@ -44,7 +44,7 @@ def ingest_repository(repository_path: str):
 
             chunks.extend(file_chunks)
 
-        ingestion_stats = add_chunks(chunks)
+        ingestion_stats = add_chunks(chunks, repository_id)
         return {
             "repository": repository_path,
             "repository_id": repository_id,

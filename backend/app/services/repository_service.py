@@ -40,6 +40,19 @@ ALLOWED_EXTENSIONS = {
 }
 
 
+IGNORED_FILES = {
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "Pipfile.lock",
+    "Cargo.lock",
+    "composer.lock",
+    "tsconfig.tsbuildinfo",
+}
+
+
 def scan_repository(repository_path: str) -> list[str]:
     path = Path(repository_path)
 
@@ -63,6 +76,9 @@ def scan_repository(repository_path: str) -> list[str]:
             continue
 
         if file_path.suffix.lower() not in ALLOWED_EXTENSIONS:
+            continue
+
+        if file_path.name in IGNORED_FILES:
             continue
 
         relative_path = file_path.relative_to(path)
