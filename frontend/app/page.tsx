@@ -294,6 +294,7 @@ export default function Home() {
       );
     } finally {
       setLoadingRepo(false);
+      setLoadingStage("");
     }
   }
 
@@ -434,8 +435,9 @@ export default function Home() {
               <div className="mt-3 flex rounded-lg border border-border bg-panel-muted/60 p-1 text-xs">
                 <button
                   onClick={() => setSource("local")}
+                  disabled={loadingRepo}
                   className={
-                    "flex-1 rounded-md px-2 py-1.5 font-medium transition-all " +
+                    "flex-1 rounded-md px-2 py-1.5 font-medium transition-all disabled:opacity-50 " +
                     (source === "local"
                       ? "bg-gradient-to-r from-accent to-accent-hover text-accent-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground")
@@ -445,8 +447,9 @@ export default function Home() {
                 </button>
                 <button
                   onClick={() => setSource("github")}
+                  disabled={loadingRepo}
                   className={
-                    "flex-1 rounded-md px-2 py-1.5 font-medium transition-all " +
+                    "flex-1 rounded-md px-2 py-1.5 font-medium transition-all disabled:opacity-50 " +
                     (source === "github"
                       ? "bg-gradient-to-r from-accent to-accent-hover text-accent-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground")
@@ -463,7 +466,8 @@ export default function Home() {
                     value={repositoryPath}
                     onChange={(event) => setRepositoryPath(event.target.value)}
                     placeholder="C:\path\to\repository"
-                    className={fieldClasses}
+                    disabled={loadingRepo}
+                    className={fieldClasses + " disabled:opacity-50"}
                   />
                 ) : (
                   <input
@@ -471,27 +475,34 @@ export default function Home() {
                     value={repositoryUrl}
                     onChange={(event) => setRepositoryUrl(event.target.value)}
                     placeholder="https://github.com/owner/repo"
-                    className={fieldClasses}
+                    disabled={loadingRepo}
+                    className={fieldClasses + " disabled:opacity-50"}
                   />
                 )}
 
                 <button
                   onClick={loadRepository}
                   disabled={loadingRepo}
-                  className="rounded-lg bg-gradient-to-r from-accent to-accent-hover px-2 py-2 text-sm font-medium text-accent-foreground shadow-sm shadow-accent/20 transition hover:brightness-110 disabled:opacity-50"
+                  className="flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-accent to-accent-hover px-2 py-2 text-sm font-medium text-accent-foreground shadow-sm shadow-accent/20 transition hover:brightness-110 disabled:opacity-50"
                 >
-                  {loadingRepo
-                    ? source === "github"
-                      ? "Cloning..."
-                      : "Loading..."
-                    : "Load Repository"}
+                  {loadingRepo && (
+                    <IconSpinner className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
+                  )}
+                  {loadingRepo ? "Working..." : "Load Repository"}
                 </button>
+
+                {loadingRepo && (
+                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <IconSpinner className="h-3 w-3 flex-shrink-0 animate-spin" />
+                    {loadingStage}
+                  </p>
+                )}
 
                 {repoError && (
                   <p className="text-xs text-red-500">{repoError}</p>
                 )}
 
-                {repositoryId && (
+                {repositoryId && !loadingRepo && (
                   <p className="truncate text-xs text-muted-foreground">
                     ID: <span className="font-mono">{repositoryId}</span>
                   </p>
@@ -503,7 +514,14 @@ export default function Home() {
               </h3>
 
               <ul className="mt-2 space-y-0.5 font-mono text-xs">
-                {topLevel.map((file) => (
+                {loadingRepo && (
+                  <li className="flex items-center gap-1.5 px-1.5 py-1 font-sans text-muted-foreground">
+                    <IconSpinner className="h-3 w-3 flex-shrink-0 animate-spin" />
+                    {loadingStage || "Loading repository..."}
+                  </li>
+                )}
+
+                {!loadingRepo && topLevel.map((file) => (
                   <li
                     key={file}
                     className="flex items-center gap-1.5 truncate rounded px-1.5 py-1 text-foreground/85 hover:bg-panel-muted"
@@ -513,7 +531,7 @@ export default function Home() {
                   </li>
                 ))}
 
-                {Array.from(groups.entries()).map(([directory, dirFiles]) => {
+                {!loadingRepo && Array.from(groups.entries()).map(([directory, dirFiles]) => {
                   const isOpen = expandedDirs.has(directory);
                   return (
                     <li key={directory}>
@@ -547,7 +565,7 @@ export default function Home() {
                   );
                 })}
 
-                {files.length === 0 && (
+                {!loadingRepo && files.length === 0 && (
                   <li className="px-1.5 py-1 font-sans text-muted-foreground">
                     No repository loaded
                   </li>
