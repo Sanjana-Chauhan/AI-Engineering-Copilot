@@ -49,6 +49,72 @@ function groupFiles(files: string[]) {
   return { topLevel, groups };
 }
 
+// Mirrors backend/app/services/code_service.py's extension -> language map,
+// so a file's sidebar icon and its source-card dot always agree on language.
+const EXTENSION_LANGUAGE: Record<string, string> = {
+  py: "python",
+  js: "javascript",
+  jsx: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  java: "java",
+  cpp: "cpp",
+  c: "c",
+  cs: "csharp",
+  go: "go",
+  rs: "rust",
+  html: "html",
+  css: "css",
+  json: "json",
+  md: "markdown",
+};
+
+const LANGUAGE_TEXT_COLOR: Record<string, string> = {
+  python: "text-blue-500",
+  javascript: "text-amber-500",
+  typescript: "text-cyan-500",
+  java: "text-rose-500",
+  cpp: "text-indigo-500",
+  c: "text-indigo-400",
+  csharp: "text-emerald-500",
+  go: "text-teal-500",
+  rust: "text-orange-500",
+  html: "text-pink-500",
+  css: "text-violet-500",
+  json: "text-slate-400",
+  markdown: "text-orange-400",
+};
+
+const LANGUAGE_DOT_COLOR: Record<string, string> = {
+  python: "bg-blue-500",
+  javascript: "bg-amber-500",
+  typescript: "bg-cyan-500",
+  java: "bg-rose-500",
+  cpp: "bg-indigo-500",
+  c: "bg-indigo-400",
+  csharp: "bg-emerald-500",
+  go: "bg-teal-500",
+  rust: "bg-orange-500",
+  html: "bg-pink-500",
+  css: "bg-violet-500",
+  json: "bg-slate-400",
+  markdown: "bg-orange-400",
+};
+
+function languageColorClass(language: string) {
+  return LANGUAGE_TEXT_COLOR[language] ?? "text-muted-foreground";
+}
+
+function languageDotClass(language: string) {
+  return LANGUAGE_DOT_COLOR[language] ?? "bg-muted-foreground/50";
+}
+
+function fileColorClass(path: string) {
+  const extension = path.split(".").pop()?.toLowerCase() ?? "";
+  const language = EXTENSION_LANGUAGE[extension];
+  return language ? languageColorClass(language) : "text-muted-foreground";
+}
+
 function IconChevron({ className }: { className?: string }) {
   return (
     <svg
@@ -184,6 +250,31 @@ function IconBug({ className }: { className?: string }) {
   );
 }
 
+function IconSun({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+  );
+}
+
+function IconMoon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+      <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a.6.6 0 0 0-.74-.74A9.5 9.5 0 1 0 21.24 15.24a.6.6 0 0 0-.74-.74z" />
+    </svg>
+  );
+}
+
 interface SseEvent {
   event: string;
   data: string;
@@ -238,7 +329,10 @@ function ThinkingDots() {
   );
 }
 
+type Theme = "light" | "dark";
+
 export default function Home() {
+  const [theme, setTheme] = useState<Theme>("light");
   const [source, setSource] = useState<RepositorySource>("local");
   const [repositoryPath, setRepositoryPath] = useState("");
   const [repositoryUrl, setRepositoryUrl] = useState("");
@@ -302,6 +396,23 @@ export default function Home() {
       container.scrollTop = container.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem("theme");
+
+    if (stored === "light" || stored === "dark") {
+      setTheme(stored);
+      return;
+    }
+
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setTheme(prefersDark ? "dark" : "light");
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("theme", theme);
+  }, [theme]);
 
   function toggleFileSelection(path: string) {
     setSelectedFile((previous) => (previous === path ? null : path));
@@ -638,8 +749,10 @@ export default function Home() {
 
           <div className="flex flex-1 overflow-hidden divide-x divide-border">
             {/* Repository / Files panel */}
-            <aside className="flex w-72 flex-col overflow-y-auto bg-panel-muted/30 p-4">
-              <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <aside className="flex w-72 flex-col overflow-hidden bg-panel-muted/30">
+            <div className="flex-1 overflow-y-auto p-4">
+              <h2 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <span className="h-1.5 w-1.5 rounded-full bg-tint-repo" />
                 Repository
               </h2>
 
@@ -694,7 +807,7 @@ export default function Home() {
                 <button
                   onClick={loadRepository}
                   disabled={loadingRepo}
-                  className="flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-accent to-accent-hover px-2 py-2 text-sm font-medium text-accent-foreground shadow-sm shadow-accent/20 transition hover:brightness-110 disabled:opacity-50"
+                  className="flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-button-from to-button-to px-2 py-2 text-sm font-medium text-button-foreground shadow-sm shadow-accent/20 transition hover:brightness-105 disabled:opacity-50"
                 >
                   {loadingRepo && (
                     <IconSpinner className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
@@ -744,7 +857,9 @@ export default function Home() {
                           : "text-foreground/85 hover:bg-panel-muted")
                       }
                     >
-                      <IconFile className="h-3.5 w-3.5 flex-shrink-0" />
+                      <IconFile
+                        className={"h-3.5 w-3.5 flex-shrink-0 " + fileColorClass(file.path)}
+                      />
                       <span className="truncate">{file.name}</span>
                     </button>
                   </li>
@@ -781,7 +896,9 @@ export default function Home() {
                                     : "text-foreground/70 hover:bg-panel-muted")
                                 }
                               >
-                                <IconFile className="h-3.5 w-3.5 flex-shrink-0" />
+                                <IconFile
+                                  className={"h-3.5 w-3.5 flex-shrink-0 " + fileColorClass(file.path)}
+                                />
                                 <span className="truncate">{file.name}</span>
                               </button>
                             </li>
@@ -798,13 +915,44 @@ export default function Home() {
                   </li>
                 )}
               </ul>
+            </div>
+
+            <div className="border-t border-border p-3">
+              <div className="flex rounded-lg border border-border bg-panel-muted/60 p-1 text-xs">
+                <button
+                  onClick={() => setTheme("light")}
+                  className={
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 font-medium transition-all " +
+                    (theme === "light"
+                      ? "bg-gradient-to-r from-button-from to-button-to text-button-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground")
+                  }
+                >
+                  <IconSun className="h-3.5 w-3.5" />
+                  Light
+                </button>
+                <button
+                  onClick={() => setTheme("dark")}
+                  className={
+                    "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 font-medium transition-all " +
+                    (theme === "dark"
+                      ? "bg-gradient-to-r from-button-from to-button-to text-button-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground")
+                  }
+                >
+                  <IconMoon className="h-3.5 w-3.5" />
+                  Dark
+                </button>
+              </div>
+            </div>
             </aside>
 
             {/* Chat panel */}
             <main className="relative flex flex-1 flex-col overflow-hidden">
               <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
                 <div>
-                  <h2 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <h2 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <span className="h-1.5 w-1.5 rounded-full bg-tint-chat" />
                     AI Chat
                   </h2>
                   <p className="mt-0.5 text-xs text-muted-foreground">
@@ -891,7 +1039,7 @@ export default function Home() {
             {/* Sources panel */}
             <aside className="flex w-80 flex-col overflow-y-auto bg-panel-muted/30 p-4">
               <h2 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <IconSource className="h-3.5 w-3.5" />
+                <IconSource className="h-3.5 w-3.5 text-tint-sources" />
                 Sources
               </h2>
               <p className="mt-0.5 text-xs text-muted-foreground">
@@ -910,11 +1058,24 @@ export default function Home() {
                     key={index}
                     className="rounded-lg border border-border bg-panel-muted/60 p-3 transition-colors hover:border-accent/40"
                   >
-                    <p className="truncate font-mono text-xs font-medium text-foreground/90">
-                      {sourceRef.file_path}
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={
+                          "h-1.5 w-1.5 flex-shrink-0 rounded-full " +
+                          languageDotClass(sourceRef.language)
+                        }
+                      />
+                      <p className="truncate font-mono text-xs font-medium text-foreground/90">
+                        {sourceRef.file_path}
+                      </p>
+                    </div>
                     <div className="mt-2 flex items-center gap-1.5">
-                      <span className="rounded-full bg-panel px-2 py-0.5 text-[10px] text-muted-foreground">
+                      <span
+                        className={
+                          "rounded-full bg-panel px-2 py-0.5 text-[10px] font-medium " +
+                          languageColorClass(sourceRef.language)
+                        }
+                      >
                         {sourceRef.language}
                       </span>
                       <span className="rounded-full bg-panel px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -953,7 +1114,7 @@ export default function Home() {
                 <button
                   onClick={explainFile}
                   disabled={sending}
-                  className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-accent/40 hover:text-foreground disabled:opacity-50"
+                  className="rounded-full border border-transparent bg-chip-teal-bg px-2.5 py-1 text-xs font-medium text-chip-teal-foreground transition-colors hover:brightness-105 disabled:opacity-50"
                 >
                   Explain this file
                 </button>
@@ -968,13 +1129,14 @@ export default function Home() {
                 aria-label="Toggle debug mode"
                 title="Debug mode: paste an error or stack trace for root-cause analysis"
                 className={
-                  "flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border transition disabled:opacity-50 " +
+                  "flex flex-shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-2.5 text-sm font-medium transition disabled:opacity-50 " +
                   (debugMode
-                    ? "border-accent bg-accent/15 text-accent"
-                    : "border-border text-muted-foreground hover:border-accent/40 hover:text-foreground")
+                    ? "border-transparent bg-chip-amber-bg text-chip-amber-foreground"
+                    : "border-chip-amber-foreground/30 text-chip-amber-foreground hover:border-chip-amber-foreground/60 hover:bg-chip-amber-bg")
                 }
               >
-                <IconBug className="h-4.5 w-4.5" />
+                <IconBug className="h-4 w-4 flex-shrink-0" />
+                Debug
               </button>
 
               {debugMode ? (
@@ -1002,7 +1164,7 @@ export default function Home() {
                 onClick={debugMode ? debugError : sendMessage}
                 disabled={!repositoryId || sending}
                 aria-label={debugMode ? "Submit error for debugging" : "Send message"}
-                className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-hover text-accent-foreground shadow-sm shadow-accent/25 transition hover:brightness-110 disabled:opacity-40"
+                className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-button-from to-button-to text-button-foreground shadow-sm shadow-accent/25 transition hover:brightness-105 disabled:opacity-40"
               >
                 <IconArrowUp className="h-4.5 w-4.5" />
               </button>

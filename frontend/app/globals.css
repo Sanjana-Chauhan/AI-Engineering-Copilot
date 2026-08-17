@@ -1,18 +1,40 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f6f7fb;
-  --foreground: #12131a;
+  /* Light theme (default) */
+  --background: #eeeaf9;
+  --foreground: #191b29;
   --panel: #ffffff;
-  --panel-muted: #eef0f6;
-  --border: rgba(18, 19, 26, 0.09);
+  --panel-muted: #e7e1f8;
+  --border: rgba(25, 27, 41, 0.15);
   --accent: #6d5ef8;
   --accent-hover: #5847ef;
   --accent-foreground: #ffffff;
-  --muted-foreground: rgba(18, 19, 26, 0.55);
+  --muted-foreground: rgba(25, 27, 41, 0.62);
   --success: #16a34a;
-  --glow-1: #6d5ef8;
-  --glow-2: #22d3ee;
+  --glow-1: #b7a4fd;
+  --glow-2: #7fd8e6;
+
+  /* Primary action buttons (Load Repository, Send) — vivid, not pastel,
+     so they stay clearly legible against the light background. */
+  --button-from: #7d6ef9;
+  --button-to: #5a47ef;
+  --button-foreground: #ffffff;
+
+  /* Three semantic chip hues so the UI isn't purple-on-purple everywhere:
+     violet = scope/brand, teal = informational, amber = debug/attention. */
+  --chip-bg: #ded2fb;
+  --chip-foreground: #4c34c9;
+
+  --chip-teal-bg: #c9f0e6;
+  --chip-teal-foreground: #0d7a63;
+
+  --chip-amber-bg: #fbe3b8;
+  --chip-amber-foreground: #92530a;
+
+  --tint-repo: #6d5ef8;
+  --tint-chat: #0891a8;
+  --tint-sources: #c2740a;
 }
 
 @theme inline {
@@ -26,12 +48,24 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-muted-foreground: var(--muted-foreground);
   --color-success: var(--success);
+  --color-button-from: var(--button-from);
+  --color-button-to: var(--button-to);
+  --color-button-foreground: var(--button-foreground);
+  --color-chip-bg: var(--chip-bg);
+  --color-chip-foreground: var(--chip-foreground);
+  --color-chip-teal-bg: var(--chip-teal-bg);
+  --color-chip-teal-foreground: var(--chip-teal-foreground);
+  --color-chip-amber-bg: var(--chip-amber-bg);
+  --color-chip-amber-foreground: var(--chip-amber-foreground);
+  --color-tint-repo: var(--tint-repo);
+  --color-tint-chat: var(--tint-chat);
+  --color-tint-sources: var(--tint-sources);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --background: #0a0b0f;
     --foreground: #edeef3;
     --panel: #13141b;
@@ -44,7 +78,56 @@
     --success: #34d399;
     --glow-1: #7c6cf6;
     --glow-2: #22d3ee;
+
+    --button-from: var(--accent);
+    --button-to: var(--accent-hover);
+    --button-foreground: #ffffff;
+
+    --chip-bg: rgba(133, 119, 255, 0.24);
+    --chip-foreground: #c3b8ff;
+
+    --chip-teal-bg: rgba(45, 212, 191, 0.2);
+    --chip-teal-foreground: #5eead4;
+
+    --chip-amber-bg: rgba(245, 158, 11, 0.2);
+    --chip-amber-foreground: #fbbf24;
+
+    --tint-repo: #a99dff;
+    --tint-chat: #45d6e8;
+    --tint-sources: #f0b559;
   }
+}
+
+:root[data-theme="dark"] {
+  --background: #0a0b0f;
+  --foreground: #edeef3;
+  --panel: #13141b;
+  --panel-muted: #1a1c25;
+  --border: rgba(255, 255, 255, 0.09);
+  --accent: #8577ff;
+  --accent-hover: #9a8dff;
+  --accent-foreground: #ffffff;
+  --muted-foreground: rgba(237, 238, 243, 0.55);
+  --success: #34d399;
+  --glow-1: #7c6cf6;
+  --glow-2: #22d3ee;
+
+  --button-from: var(--accent);
+  --button-to: var(--accent-hover);
+  --button-foreground: #ffffff;
+
+  --chip-bg: rgba(133, 119, 255, 0.24);
+  --chip-foreground: #c3b8ff;
+
+  --chip-teal-bg: rgba(45, 212, 191, 0.2);
+  --chip-teal-foreground: #5eead4;
+
+  --chip-amber-bg: rgba(245, 158, 11, 0.2);
+  --chip-amber-foreground: #fbbf24;
+
+  --tint-repo: #a99dff;
+  --tint-chat: #45d6e8;
+  --tint-sources: #f0b559;
 }
 
 body {
