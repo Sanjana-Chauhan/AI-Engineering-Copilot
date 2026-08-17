@@ -1,3 +1,5 @@
+import re
+
 from app.services.vector_store import collection
 from app.models.code import CodeChunk
 
@@ -13,6 +15,17 @@ DOC_BACKFILL_MAX_SCORE = 0.65
 # doesn't matter as much as covering the whole thing — cap generously
 # instead of the usual top-k, so a multi-chunk file doesn't get truncated.
 FILE_SCOPE_CHUNK_LIMIT = 40
+
+# Error/stack traces often reference several files (a raise site plus a few
+# frames of call stack) — pull the full content of a few of them rather than
+# just the top one.
+MAX_DEBUG_FILE_MATCHES = 3
+
+# Matches path-like tokens (e.g. "app/services/rag_service.py" or
+# "src\\foo.ts" from a stack trace frame). Intentionally permissive — false
+# positives are harmless since candidates are only kept if they actually
+# match an indexed file path.
+_PATH_TOKEN_PATTERN = re.compile(r"[\w.\-]+(?:[/\\][\w.\-]+)*\.[A-Za-z]+")
 
 
 def _to_chunks(documents, metadatas, distances=None) -> list[CodeChunk]:
@@ -98,5 +111,67 @@ def search_code(
                 doc_distances
             )
         )
+
+    return chunks
+
+
+def get_indexed_file_paths(repository_id: str) -> set[str]:
+    results = collection.get(
+        where={"repository_id": repository_id},
+        include=["metadatas"]
+    )
+
+    return {metadata["file_path"] for metadata in results.get("metadatas", [])}
+
+
+def _find_mentioned_files(error_text: str, indexed_paths: set[str]) -> list[str]:
+    candidates = {
+        token.replace("\\", "/") for token in _PATH_TOKEN_PATTERN.findall(error_text)
+    }
+
+    if not candidates:
+        return []
+
+    matches = []
+
+    for indexed_path in indexed_paths:
+        normalized_indexed = indexed_path.replace("\\", "/")
+
+        if any(
+            normalized_indexed.endswith(candidate) or candidate.endswith(normalized_indexed)
+            for candidate in candidates
+        ):
+            matches.append(indexed_path)
+
+    return matches
+
+
+def search_for_debug(
+    error_text: str,
+    repository_id: str,
+    limit: int = 5
+) -> list[CodeChunk]:
+    """Retrieval tuned for debugging: files named in the stack trace are
+    pulled in full, then backed up with the usual semantic search over the
+    error text so related-but-unmentioned code can still surface."""
+
+    indexed_paths = get_indexed_file_paths(repository_id)
+    mentioned_files = _find_mentioned_files(error_text, indexed_paths)
+
+    chunks: list[CodeChunk] = []
+    seen_keys = set()
+
+    for file_path in mentioned_files[:MAX_DEBUG_FILE_MATCHES]:
+        for chunk in search_code(error_text, repository_id, file_path=file_path):
+            key = (chunk.file_path, chunk.start_line, chunk.end_line)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                chunks.append(chunk)
+
+    for chunk in search_code(error_text, repository_id, limit=limit):
+        key = (chunk.file_path, chunk.start_line, chunk.end_line)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            chunks.append(chunk)
 
     return chunks

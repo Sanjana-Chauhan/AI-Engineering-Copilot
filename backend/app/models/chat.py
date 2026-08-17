@@ -8,6 +8,19 @@ class ChatRequest(BaseModel):
     file_path: str | None = None
 
 
+class ExplainRequest(BaseModel):
+    repository_id: str
+    file_path: str
+    conversation_id: str | None = None
+
+
+class DebugRequest(BaseModel):
+    repository_id: str
+    error_text: str
+    file_path: str | None = None
+    conversation_id: str | None = None
+
+
 class SourceReference(BaseModel):
     file_path: str
     language: str

@@ -162,6 +162,28 @@ function IconSpinner({ className }: { className?: string }) {
   );
 }
 
+function IconBug({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <rect x="7" y="8" width="10" height="11" rx="4" />
+      <path d="M9 8V6a3 3 0 1 1 6 0v2" />
+      <path d="M12 11v6" />
+      <path d="M4 12h3" />
+      <path d="M17 12h3" />
+      <path d="M5 18l2-2" />
+      <path d="M19 18l-2-2" />
+    </svg>
+  );
+}
+
 interface SseEvent {
   event: string;
   data: string;
@@ -233,6 +255,7 @@ export default function Home() {
   const [sources, setSources] = useState<Source[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -435,6 +458,104 @@ export default function Home() {
     }
   }
 
+  async function explainFile() {
+    if (!selectedFile || !repositoryId || sending) {
+      return;
+    }
+
+    const fileLabel = selectedFile.replace(/\\/g, "/");
+    isPinnedToBottomRef.current = true;
+    setShowJumpToBottom(false);
+    setMessages((previous) => [
+      ...previous,
+      { role: "user", content: `Explain ${fileLabel}` },
+      { role: "assistant", content: "" },
+    ]);
+    setSending(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/chat/explain/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repository_id: repositoryId,
+          file_path: selectedFile,
+          conversation_id: conversationId,
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error("Explain stream request failed");
+      }
+
+      for await (const sseEvent of readSseEvents(response.body)) {
+        if (sseEvent.event === "meta") {
+          const meta = JSON.parse(sseEvent.data);
+          setConversationId(meta.conversation_id ?? null);
+          setSources(meta.sources ?? []);
+        } else if (sseEvent.event === "token") {
+          updateLastAssistantMessage((content) => content + sseEvent.data);
+        }
+      }
+    } catch {
+      updateLastAssistantMessage(
+        (content) => content || "Something went wrong. Please try again."
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function debugError() {
+    if (!input.trim() || !repositoryId || sending) {
+      return;
+    }
+
+    const errorText = input.trim();
+    isPinnedToBottomRef.current = true;
+    setShowJumpToBottom(false);
+    setMessages((previous) => [
+      ...previous,
+      { role: "user", content: errorText },
+      { role: "assistant", content: "" },
+    ]);
+    setInput("");
+    setSending(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/chat/debug/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          repository_id: repositoryId,
+          error_text: errorText,
+          file_path: selectedFile,
+          conversation_id: conversationId,
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error("Debug stream request failed");
+      }
+
+      for await (const sseEvent of readSseEvents(response.body)) {
+        if (sseEvent.event === "meta") {
+          const meta = JSON.parse(sseEvent.data);
+          setConversationId(meta.conversation_id ?? null);
+          setSources(meta.sources ?? []);
+        } else if (sseEvent.event === "token") {
+          updateLastAssistantMessage((content) => content + sseEvent.data);
+        }
+      }
+    } catch {
+      updateLastAssistantMessage(
+        (content) => content || "Something went wrong. Please try again."
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function startNewChat() {
     if (conversationId) {
       fetch(`${API_BASE}/api/chat/${conversationId}`, { method: "DELETE" }).catch(
@@ -448,7 +569,17 @@ export default function Home() {
     setShowJumpToBottom(false);
   }
 
-  function handleInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+  function handleInputKeyDown(
+    event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) {
+    if (debugMode) {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        debugError();
+      }
+      return;
+    }
+
     if (event.key === "Enter") {
       sendMessage();
     }
@@ -818,23 +949,59 @@ export default function Home() {
                     <IconClose className="h-3 w-3" />
                   </button>
                 </span>
+
+                <button
+                  onClick={explainFile}
+                  disabled={sending}
+                  className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-accent/40 hover:text-foreground disabled:opacity-50"
+                >
+                  Explain this file
+                </button>
               </div>
             )}
 
-            <div className="flex items-center gap-3 p-4">
-              <input
-                type="text"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={handleInputKeyDown}
-                placeholder="Ask about your repository..."
-                disabled={!repositoryId}
-                className={fieldClasses + " py-2.5"}
-              />
+            <div className="flex items-end gap-3 p-4">
               <button
-                onClick={sendMessage}
+                onClick={() => setDebugMode((previous) => !previous)}
+                disabled={sending}
+                aria-pressed={debugMode}
+                aria-label="Toggle debug mode"
+                title="Debug mode: paste an error or stack trace for root-cause analysis"
+                className={
+                  "flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border transition disabled:opacity-50 " +
+                  (debugMode
+                    ? "border-accent bg-accent/15 text-accent"
+                    : "border-border text-muted-foreground hover:border-accent/40 hover:text-foreground")
+                }
+              >
+                <IconBug className="h-4.5 w-4.5" />
+              </button>
+
+              {debugMode ? (
+                <textarea
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={handleInputKeyDown}
+                  placeholder="Paste an error message or stack trace... (Ctrl+Enter to submit)"
+                  disabled={!repositoryId}
+                  rows={3}
+                  className={fieldClasses + " resize-none py-2.5 font-mono"}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={handleInputKeyDown}
+                  placeholder="Ask about your repository..."
+                  disabled={!repositoryId}
+                  className={fieldClasses + " py-2.5"}
+                />
+              )}
+              <button
+                onClick={debugMode ? debugError : sendMessage}
                 disabled={!repositoryId || sending}
-                aria-label="Send message"
+                aria-label={debugMode ? "Submit error for debugging" : "Send message"}
                 className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-hover text-accent-foreground shadow-sm shadow-accent/25 transition hover:brightness-110 disabled:opacity-40"
               >
                 <IconArrowUp className="h-4.5 w-4.5" />
