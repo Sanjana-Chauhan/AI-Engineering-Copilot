@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const API_BASE = "http://127.0.0.1:8000";
 
@@ -17,6 +19,22 @@ interface Source {
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  toolCalls?: string[];
+}
+
+function describeToolCall(name: string, args: Record<string, unknown>): string {
+  switch (name) {
+    case "search_code":
+      return `Searching code for "${args.query ?? ""}"`;
+    case "get_file_content":
+      return `Reading ${String(args.file_path ?? "").replace(/\\/g, "/")}`;
+    case "list_repository_files":
+      return args.directory_prefix
+        ? `Listing files under "${args.directory_prefix}"`
+        : "Listing repository files";
+    default:
+      return `Running ${name}`;
+  }
 }
 
 interface FileEntry {
@@ -275,6 +293,22 @@ function IconMoon({ className }: { className?: string }) {
   );
 }
 
+function IconWrench({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </svg>
+  );
+}
+
 interface SseEvent {
   event: string;
   data: string;
@@ -326,6 +360,82 @@ function ThinkingDots() {
         />
       ))}
     </span>
+  );
+}
+
+const MARKDOWN_COMPONENTS: Components = {
+  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+  ul: ({ children }) => (
+    <ul className="mb-2 ml-4 list-disc space-y-1 last:mb-0">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="mb-2 ml-4 list-decimal space-y-1 last:mb-0">{children}</ol>
+  ),
+  li: ({ children }) => <li>{children}</li>,
+  h1: ({ children }) => (
+    <h1 className="mb-2 mt-1 text-base font-semibold first:mt-0">{children}</h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="mb-1.5 mt-1 text-[15px] font-semibold first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="mb-1.5 mt-1 text-sm font-semibold first:mt-0">{children}</h3>
+  ),
+  a: ({ children, href }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent underline underline-offset-2 hover:text-accent-hover"
+    >
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="mb-2 border-l-2 border-border pl-3 text-muted-foreground last:mb-0">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="my-3 border-border" />,
+  table: ({ children }) => (
+    <div className="mb-2 overflow-x-auto last:mb-0">
+      <table className="w-full border-collapse text-xs">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th className="border border-border bg-panel px-2 py-1 text-left font-semibold">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => <td className="border border-border px-2 py-1">{children}</td>,
+  pre: ({ children }) => (
+    <pre className="mb-2 overflow-x-auto rounded-lg border border-border bg-panel px-3 py-2.5 text-xs last:mb-0">
+      {children}
+    </pre>
+  ),
+  code: ({ className, children }) => {
+    // Fenced code blocks are multi-line; inline `code` spans never contain a
+    // newline — cheap, dependency-free way to tell them apart since
+    // react-markdown no longer passes an `inline` flag.
+    const isBlock = String(children).includes("\n");
+
+    if (isBlock) {
+      return <code className={"font-mono " + (className ?? "")}>{children}</code>;
+    }
+
+    return (
+      <code className="rounded bg-panel px-1 py-0.5 font-mono text-[13px]">
+        {children}
+      </code>
+    );
+  },
+};
+
+function MarkdownMessage({ content }: { content: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+      {content}
+    </ReactMarkdown>
   );
 }
 
@@ -512,8 +622,22 @@ export default function Home() {
       const next = [...previous];
       const lastIndex = next.length - 1;
       next[lastIndex] = {
+        ...next[lastIndex],
         role: "assistant",
         content: updater(next[lastIndex].content),
+      };
+      return next;
+    });
+  }
+
+  function appendToolCall(description: string) {
+    setMessages((previous) => {
+      const next = [...previous];
+      const lastIndex = next.length - 1;
+      next[lastIndex] = {
+        ...next[lastIndex],
+        role: "assistant",
+        toolCalls: [...(next[lastIndex].toolCalls ?? []), description],
       };
       return next;
     });
@@ -558,9 +682,15 @@ export default function Home() {
           setSources(meta.sources ?? []);
         } else if (sseEvent.event === "token") {
           updateLastAssistantMessage((content) => content + sseEvent.data);
+        } else if (sseEvent.event === "tool_call") {
+          const call = JSON.parse(sseEvent.data);
+          appendToolCall(describeToolCall(call.name, call.args ?? {}));
+        } else if (sseEvent.event === "error") {
+          updateLastAssistantMessage((content) => content || sseEvent.data);
         }
       }
-    } catch {
+    } catch (error) {
+      console.error("Chat stream failed:", error);
       updateLastAssistantMessage(
         (content) => content || "Something went wrong. Please try again."
       );
@@ -606,9 +736,12 @@ export default function Home() {
           setSources(meta.sources ?? []);
         } else if (sseEvent.event === "token") {
           updateLastAssistantMessage((content) => content + sseEvent.data);
+        } else if (sseEvent.event === "error") {
+          updateLastAssistantMessage((content) => content || sseEvent.data);
         }
       }
-    } catch {
+    } catch (error) {
+      console.error("Chat stream failed:", error);
       updateLastAssistantMessage(
         (content) => content || "Something went wrong. Please try again."
       );
@@ -656,9 +789,12 @@ export default function Home() {
           setSources(meta.sources ?? []);
         } else if (sseEvent.event === "token") {
           updateLastAssistantMessage((content) => content + sseEvent.data);
+        } else if (sseEvent.event === "error") {
+          updateLastAssistantMessage((content) => content || sseEvent.data);
         }
       }
-    } catch {
+    } catch (error) {
+      console.error("Chat stream failed:", error);
       updateLastAssistantMessage(
         (content) => content || "Something went wrong. Please try again."
       );
@@ -1010,15 +1146,46 @@ export default function Home() {
                         </div>
                       )}
 
-                      <div
-                        className={
-                          "max-w-[75%] whitespace-pre-wrap px-3.5 py-2.5 text-sm leading-relaxed shadow-sm " +
-                          (message.role === "user"
-                            ? "rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent-hover text-accent-foreground"
-                            : "rounded-2xl rounded-bl-md border border-border bg-panel-muted/70 text-foreground")
-                        }
-                      >
-                        {isStreamingPlaceholder ? <ThinkingDots /> : message.content}
+                      <div className="flex max-w-[75%] flex-col gap-1.5">
+                        {!!message.toolCalls?.length && (
+                          <div className="flex flex-col gap-1 border-l-2 border-border pl-2.5">
+                            {message.toolCalls.map((call, callIndex) => {
+                              const isActive =
+                                isStreamingPlaceholder && callIndex === message.toolCalls!.length - 1;
+
+                              return (
+                                <div
+                                  key={callIndex}
+                                  className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                                >
+                                  {isActive ? (
+                                    <IconSpinner className="h-3 w-3 flex-shrink-0 animate-spin" />
+                                  ) : (
+                                    <IconWrench className="h-3 w-3 flex-shrink-0 opacity-60" />
+                                  )}
+                                  <span className="font-mono">{call}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div
+                          className={
+                            "px-3.5 py-2.5 text-sm leading-relaxed shadow-sm " +
+                            (message.role === "user"
+                              ? "whitespace-pre-wrap rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent-hover text-accent-foreground"
+                              : "rounded-2xl rounded-bl-md border border-border bg-panel-muted/70 text-foreground")
+                          }
+                        >
+                          {isStreamingPlaceholder ? (
+                            <ThinkingDots />
+                          ) : message.role === "assistant" ? (
+                            <MarkdownMessage content={message.content} />
+                          ) : (
+                            message.content
+                          )}
+                        </div>
                       </div>
                     </div>
                   );

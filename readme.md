@@ -425,15 +425,15 @@ capped at the last 10 turns to bound prompt size.
 ## Roadmap
 
 **Done:** local + GitHub ingestion, scanning, chunking, hashing, ADD/UPDATE/SKIP
-sync, ChromaDB vector search, RAG-connected chat, source attribution,
-multi-turn conversation history, SSE streaming, redesigned 3-panel UI.
+sync (including delete-sync for removed files), ChromaDB vector search,
+code-primary/doc-backup retrieval, RAG-connected chat, source attribution,
+multi-turn conversation history, SSE streaming, redesigned 3-panel UI with
+light/dark theming, repository/file-scoped chat, code explanation workflow,
+debugging workflow (stack-trace-aware retrieval), and AI tool calling
+(search_code / get_file_content / list_repository_files, available to the
+model during regular chat).
 
 **Next:**
-- Delete-sync for files removed from a repository
-- Persistent conversation store
+- Persistent conversation store (currently in-memory, lost on restart)
 - Markdown rendering in the chat UI
-- Repository/file-scoped chat (narrow retrieval to a chosen file or folder)
-- Code explanation workflow
-- Debugging workflow
-- AI tool calling
 - Automated tests

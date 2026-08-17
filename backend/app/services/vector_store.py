@@ -59,22 +59,28 @@ def add_chunks(chunks: list[CodeChunk], repository_id: str) -> dict:
             "deleted": deleted
         }
 
-    added = 0
-    updated = 0
+    chunk_ids = [
+        f"{chunk.repository_id}:{chunk.file_path}:{chunk.start_line}"
+        for chunk in chunks
+    ]
+
+    existing = collection.get(
+        ids=chunk_ids,
+        include=["metadatas"]
+    )
+
+    existing_content_hashes = {
+        existing_id: existing_metadata.get("content_hash")
+        for existing_id, existing_metadata in zip(
+            existing["ids"], existing["metadatas"]
+        )
+    }
+
+    add_ids, add_documents, add_metadatas = [], [], []
+    update_ids, update_documents, update_metadatas = [], [], []
     skipped = 0
 
-    for chunk in chunks:
-
-        chunk_id = (
-            f"{chunk.repository_id}:"
-            f"{chunk.file_path}:"
-            f"{chunk.start_line}"
-        )
-
-        existing = collection.get(
-            ids=[chunk_id],
-            include=["metadatas"]
-        )
+    for chunk_id, chunk in zip(chunk_ids, chunks):
 
         metadata = {
             "repository_id": chunk.repository_id,
@@ -85,37 +91,34 @@ def add_chunks(chunks: list[CodeChunk], repository_id: str) -> dict:
             "content_hash": chunk.content_hash
         }
 
-        if not existing["ids"]:
-
-            collection.add(
-                documents=[chunk.content],
-                ids=[chunk_id],
-                metadatas=[metadata]
-            )
-
-            added += 1
-            continue
-
-        existing_metadata = existing["metadatas"][0]
-
-        if (
-            existing_metadata.get("content_hash")
-            == chunk.content_hash
-        ):
+        if chunk_id not in existing_content_hashes:
+            add_ids.append(chunk_id)
+            add_documents.append(chunk.content)
+            add_metadatas.append(metadata)
+        elif existing_content_hashes[chunk_id] != chunk.content_hash:
+            update_ids.append(chunk_id)
+            update_documents.append(chunk.content)
+            update_metadatas.append(metadata)
+        else:
             skipped += 1
-            continue
 
-        collection.update(
-            ids=[chunk_id],
-            documents=[chunk.content],
-            metadatas=[metadata]
+    if add_ids:
+        collection.add(
+            documents=add_documents,
+            ids=add_ids,
+            metadatas=add_metadatas
         )
 
-        updated += 1
+    if update_ids:
+        collection.update(
+            ids=update_ids,
+            documents=update_documents,
+            metadatas=update_metadatas
+        )
 
     return {
-        "added": added,
-        "updated": updated,
+        "added": len(add_ids),
+        "updated": len(update_ids),
         "skipped": skipped,
         "deleted": deleted
     }

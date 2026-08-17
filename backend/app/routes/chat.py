@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -13,6 +14,16 @@ from app.services.rag_service import (
 )
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
+
+
+def _friendly_stream_error_message(error: Exception) -> str:
+    if "RESOURCE_EXHAUSTED" in str(error) or "429" in str(error):
+        return (
+            "The AI model has hit its rate limit for now. "
+            "Please wait a bit and try again."
+        )
+    return "The AI service ran into an error while responding. Please try again."
 
 
 def _serialize_sources(chunks) -> list[dict]:
@@ -80,7 +91,7 @@ def chat_stream(request: ChatRequest):
         repository_id=request.repository_id
     )
 
-    chunks, token_stream = answer_repository_question_stream(
+    chunks, events = answer_repository_question_stream(
         question=request.message,
         repository_id=request.repository_id,
         history=history,
@@ -97,9 +108,19 @@ def chat_stream(request: ChatRequest):
 
         answer_parts = []
 
-        for token in token_stream:
-            answer_parts.append(token)
-            yield _sse("token", token)
+        try:
+            for event in events:
+                if event["type"] == "token":
+                    answer_parts.append(event["text"])
+                    yield _sse("token", event["text"])
+                elif event["type"] == "tool_call":
+                    yield _sse("tool_call", json.dumps({
+                        "name": event["name"],
+                        "args": event["args"]
+                    }))
+        except Exception as error:
+            logger.exception("chat stream failed")
+            yield _sse("error", _friendly_stream_error_message(error))
 
         conversation_service.append_turn(
             conversation_id=conversation_id,
@@ -145,9 +166,13 @@ def explain_stream(request: ExplainRequest):
 
         answer_parts = []
 
-        for token in token_stream:
-            answer_parts.append(token)
-            yield _sse("token", token)
+        try:
+            for token in token_stream:
+                answer_parts.append(token)
+                yield _sse("token", token)
+        except Exception as error:
+            logger.exception("chat stream failed")
+            yield _sse("error", _friendly_stream_error_message(error))
 
         conversation_service.append_turn(
             conversation_id=conversation_id,
@@ -194,9 +219,13 @@ def debug_stream(request: DebugRequest):
 
         answer_parts = []
 
-        for token in token_stream:
-            answer_parts.append(token)
-            yield _sse("token", token)
+        try:
+            for token in token_stream:
+                answer_parts.append(token)
+                yield _sse("token", token)
+        except Exception as error:
+            logger.exception("chat stream failed")
+            yield _sse("error", _friendly_stream_error_message(error))
 
         conversation_service.append_turn(
             conversation_id=conversation_id,

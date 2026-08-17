@@ -55,19 +55,21 @@ def search_code(
 ) -> list[CodeChunk]:
 
     if file_path:
-        results = collection.get(
-            where={
-                "$and": [
-                    {"repository_id": repository_id},
-                    {"file_path": file_path}
-                ]
-            }
-        )
+        # Match on a normalized path rather than the raw where-filter value —
+        # callers (an LLM tool call, in particular) can't be expected to know
+        # this repo's stored path uses OS-native separators (backslashes on
+        # Windows) rather than forward slashes.
+        normalized_target = file_path.replace("\\", "/")
 
-        chunks = _to_chunks(
-            results.get("documents", []),
-            results.get("metadatas", [])
-        )
+        results = collection.get(where={"repository_id": repository_id})
+
+        chunks = [
+            chunk for chunk in _to_chunks(
+                results.get("documents", []),
+                results.get("metadatas", [])
+            )
+            if chunk.file_path.replace("\\", "/") == normalized_target
+        ]
         chunks.sort(key=lambda chunk: chunk.start_line)
 
         return chunks[:FILE_SCOPE_CHUNK_LIMIT]
@@ -113,6 +115,11 @@ def search_code(
         )
 
     return chunks
+
+
+def get_file_content(file_path: str, repository_id: str) -> str:
+    chunks = search_code(file_path, repository_id, file_path=file_path)
+    return "\n".join(chunk.content for chunk in chunks)
 
 
 def get_indexed_file_paths(repository_id: str) -> set[str]:

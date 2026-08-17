@@ -6,3 +6,5 @@ frontend/.env
 backend/data
 __pycache__/
 *.pyc
+
+INTERVIEW_PREP.md

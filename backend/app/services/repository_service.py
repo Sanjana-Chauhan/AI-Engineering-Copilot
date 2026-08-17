@@ -1,4 +1,5 @@
 import hashlib
+import os
 import re
 import subprocess
 import tempfile
@@ -64,26 +65,27 @@ def scan_repository(repository_path: str) -> list[str]:
 
     files = []
 
-    for file_path in path.rglob("*"):
+    for root, directory_names, file_names in os.walk(path):
 
-        if not file_path.is_file():
-            continue
+        directory_names[:] = [
+            directory_name
+            for directory_name in directory_names
+            if directory_name not in IGNORED_DIRECTORIES
+        ]
 
-        if any(
-            directory in IGNORED_DIRECTORIES
-            for directory in file_path.parts
-        ):
-            continue
+        for file_name in file_names:
 
-        if file_path.suffix.lower() not in ALLOWED_EXTENSIONS:
-            continue
+            file_path = Path(root) / file_name
 
-        if file_path.name in IGNORED_FILES:
-            continue
+            if file_path.suffix.lower() not in ALLOWED_EXTENSIONS:
+                continue
 
-        relative_path = file_path.relative_to(path)
+            if file_path.name in IGNORED_FILES:
+                continue
 
-        files.append(str(relative_path))
+            relative_path = file_path.relative_to(path)
+
+            files.append(str(relative_path))
 
     return files
 

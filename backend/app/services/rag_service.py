@@ -1,7 +1,13 @@
 from app.models.code import CodeChunk
 from app.services.conversation_service import ConversationTurn
 from app.services.search_service import DOC_LANGUAGE, search_code, search_for_debug
-from app.services.llm_service import generate_response, generate_response_stream
+from app.services.llm_service import (
+    generate_response,
+    generate_response_stream,
+    generate_with_tools,
+    generate_with_tools_stream,
+)
+from app.services.tool_service import build_tool_executor, build_tools
 
 
 NO_CONTEXT_MESSAGE = (
@@ -74,9 +80,13 @@ Rules:
 - [CODE] snippets are the authoritative source of truth about how the system actually works.
 - [DOCUMENTATION] snippets may be outdated. Use them only for high-level framing, and defer to [CODE] whenever the two disagree.
 - Do not invent files or code that are not present.
-- If the context does not contain enough information, say so.
 - Mention relevant file paths and line numbers when possible.
 - Use the conversation history to resolve follow-up references (e.g. "it", "that file", "the previous one").
+- You have tools available: search_code, get_file_content, list_repository_files.
+  The context below is only a starting point — if it doesn't fully answer the
+  question, use these tools to look further (e.g. search with a different
+  query, or read a whole file you found by name) before answering. Only say
+  the context is insufficient after you've tried the tools.
 
 Conversation History:
 {history_block}
@@ -318,7 +328,9 @@ def answer_repository_question(
         }
 
     prompt = build_prompt(question, chunks, history or [], file_path)
-    answer = generate_response(prompt)
+    tools = build_tools()
+    tool_executor = build_tool_executor(repository_id)
+    answer = generate_with_tools(prompt, tools, tool_executor)
 
     return {
         "answer": answer,
@@ -333,6 +345,11 @@ def answer_repository_question_stream(
     limit: int = 5,
     file_path: str | None = None
 ):
+    """Returns (sources, events). `events` yields {"type": "token", "text"}
+    and {"type": "tool_call", "name", "args"} dicts, since the model may call
+    tools (search_code / get_file_content / list_repository_files) to gather
+    more context beyond the initial retrieval before answering."""
+
     chunks = search_code(
         query=question,
         limit=limit,
@@ -344,10 +361,12 @@ def answer_repository_question_stream(
         message = _no_context_message(file_path)
 
         def no_context_stream():
-            yield message
+            yield {"type": "token", "text": message}
 
         return [], no_context_stream()
 
     prompt = build_prompt(question, chunks, history or [], file_path)
+    tools = build_tools()
+    tool_executor = build_tool_executor(repository_id)
 
-    return chunks, generate_response_stream(prompt)
+    return chunks, generate_with_tools_stream(prompt, tools, tool_executor)
