@@ -89,7 +89,7 @@ flowchart TB
         VectorStore["vector_store<br/>add_chunks (ADD/UPDATE/SKIP)"]
         SearchSvc["search_service<br/>search_code"]
         RagSvc["rag_service<br/>build_prompt + answer_*"]
-        ConvSvc["conversation_service<br/>in-memory history"]
+        ConvSvc["conversation_service<br/>SQLite-backed history"]
         LlmSvc["llm_service<br/>Gemini client"]
     end
 
@@ -170,6 +170,7 @@ AI-Engineering-Copilot/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                    # FastAPI app, CORS, router registration
+│   │   ├── config.py                  # all env-driven settings (URLs, model, paths)
 │   │   ├── models/
 │   │   │   ├── chat.py                # ChatRequest, ChatResponse, SourceReference
 │   │   │   └── code.py                # CodeChunk
@@ -185,16 +186,21 @@ AI-Engineering-Copilot/
 │   │       ├── vector_store.py        # ChromaDB client, add_chunks (ADD/UPDATE/SKIP)
 │   │       ├── search_service.py      # search_code
 │   │       ├── rag_service.py         # build_prompt, answer_repository_question(_stream)
-│   │       ├── conversation_service.py# per-repository chat history (in-memory)
-│   │       └── llm_service.py         # Gemini client, generate_response(_stream)
+│   │       ├── tool_service.py        # tool declarations + executor for AI tool calling
+│   │       ├── conversation_service.py# per-repository chat history (SQLite-backed)
+│   │       └── llm_service.py         # Gemini client, generate_response(_stream), generate_with_tools(_stream)
 │   ├── data/chroma/                   # persistent ChromaDB store (gitignored)
+│   ├── data/conversations.db          # persistent conversation history (gitignored)
 │   ├── requirements.txt
-│   └── .env                           # GEMINI_API_KEY (gitignored)
+│   ├── .env.example                   # documents all available env vars
+│   └── .env                           # GEMINI_API_KEY + overrides (gitignored)
 │
 └── frontend/
     ├── app/
     │   ├── layout.tsx                 # root layout, fonts, page metadata
     │   ├── page.tsx                   # entire UI: repo loader, chat, sources
+    ├── .env.example                   # documents NEXT_PUBLIC_API_BASE_URL
+    ├── .env.local                     # local override (gitignored)
     │   └── globals.css                # design tokens, light/dark theme
     ├── next.config.ts
     └── package.json
@@ -215,6 +221,8 @@ AI-Engineering-Copilot/
 | Frontend framework | Next.js 16 (App Router, Turbopack) |
 | UI library | React 19 |
 | Styling | Tailwind CSS v4 (custom design tokens, dark/light aware) |
+| Markdown rendering | `react-markdown` + `remark-gfm` |
+| Conversation storage | SQLite (`sqlite3`, stdlib — no extra dependency) |
 | Repository access | Git CLI (shallow clone for GitHub URLs) |
 
 ---
@@ -230,11 +238,18 @@ venv\Scripts\activate          # Windows; use `source venv/bin/activate` on macO
 pip install -r requirements.txt
 ```
 
-Create `backend/.env`:
+Copy `backend/.env.example` to `backend/.env` and fill in your key:
 
 ```env
 GEMINI_API_KEY=your_gemini_api_key
 ```
+
+`.env.example` also documents optional overrides (`ALLOWED_ORIGINS`,
+`GEMINI_MODEL`, `CHROMA_DB_PATH`, `CONVERSATIONS_DB_PATH`,
+`EMBEDDING_MODEL_NAME`) — every one has a sensible local-dev default baked
+into `app/config.py`, so you only need to set what you're actually changing
+(e.g. `ALLOWED_ORIGINS` once the frontend is deployed somewhere other than
+`localhost:3000`).
 
 > `requirements.txt` may not fully capture every runtime dependency (e.g.
 > `chromadb`, `sentence-transformers`) depending on when it was last
@@ -256,6 +271,11 @@ cd frontend
 npm install
 npm run dev
 ```
+
+By default the frontend talks to `http://127.0.0.1:8000`. To point it at a
+different backend (e.g. a deployed API), copy `frontend/.env.example` to
+`frontend/.env.local` and set `NEXT_PUBLIC_API_BASE_URL` — then rebuild,
+since Next.js inlines `NEXT_PUBLIC_*` values at build time, not runtime.
 
 Frontend is now live at `http://localhost:3000`.
 
@@ -395,27 +415,18 @@ variants share the same retrieval and prompt-building code — they only
 differ in whether `llm_service.generate_response` or
 `generate_response_stream` is called.
 
-**Conversation history.** `conversation_service` keeps an in-memory map of
-`conversation_id → (repository_id, turns)`. If a request's `repository_id`
-doesn't match what a conversation was created with, its history is
-silently reset rather than leaking context from the wrong repo. History is
-capped at the last 10 turns to bound prompt size.
+**Conversation history.** `conversation_service` stores turns in a local
+SQLite database (`data/conversations.db`), keyed by `conversation_id` +
+`repository_id`, so history survives a backend restart. If a request's
+`repository_id` doesn't match what a conversation was previously used with,
+its old turns are discarded rather than leaking context from the wrong
+repo. Reads are capped to the last 10 turns to bound prompt size.
 
 ---
 
 ## Known Limitations
 
-- **Conversation history is in-memory only** — it resets on backend
-  restart and isn't safe under heavy concurrent access. Fine for local,
-  single-user use; would need a real store (Redis/SQLite/etc.) otherwise.
-- **No delete-sync on ingestion** — if a file is removed from the
-  repository between ingests, its previously indexed chunks stay in
-  ChromaDB. Only `ADD` / `UPDATE` / `SKIP` are implemented, not a
-  removal pass.
 - **No authentication** — the API is open, intended for local development.
-- **Chat responses render as plain text** — the model sometimes returns
-  Markdown (`### `, `**bold**`) which currently shows as literal characters
-  in the chat bubble rather than being rendered.
 - **`requirements.txt` may be incomplete** relative to actual imports
   (e.g. `chromadb`, `sentence-transformers`); regenerate it periodically
   with `pip freeze`.
@@ -427,13 +438,12 @@ capped at the last 10 turns to bound prompt size.
 **Done:** local + GitHub ingestion, scanning, chunking, hashing, ADD/UPDATE/SKIP
 sync (including delete-sync for removed files), ChromaDB vector search,
 code-primary/doc-backup retrieval, RAG-connected chat, source attribution,
-multi-turn conversation history, SSE streaming, redesigned 3-panel UI with
-light/dark theming, repository/file-scoped chat, code explanation workflow,
+multi-turn conversation history (persisted to SQLite, survives restarts),
+SSE streaming, redesigned 3-panel UI with light/dark theming, Markdown
+rendering in chat, repository/file-scoped chat, code explanation workflow,
 debugging workflow (stack-trace-aware retrieval), and AI tool calling
 (search_code / get_file_content / list_repository_files, available to the
 model during regular chat).
 
 **Next:**
-- Persistent conversation store (currently in-memory, lost on restart)
-- Markdown rendering in the chat UI
 - Automated tests

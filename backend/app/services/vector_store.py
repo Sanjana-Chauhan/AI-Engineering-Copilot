@@ -2,18 +2,19 @@ import chromadb
 
 from chromadb.utils import embedding_functions
 
+from app.config import CHROMA_DB_PATH, EMBEDDING_MODEL_NAME
 from app.models.code import CodeChunk
 
 
 embedding_function = (
     embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name="all-MiniLM-L6-v2"
+        model_name=EMBEDDING_MODEL_NAME
     )
 )
 
 
 client = chromadb.PersistentClient(
-    path="./data/chroma"
+    path=CHROMA_DB_PATH
 )
 
 

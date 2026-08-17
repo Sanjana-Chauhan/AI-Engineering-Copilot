@@ -1,16 +1,11 @@
-import os
-
-from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
-load_dotenv()
+from app.config import GEMINI_API_KEY, GEMINI_MODEL
 
-api_key = os.getenv("GEMINI_API_KEY")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-client = genai.Client(api_key=api_key)
-
-MODEL_NAME = "gemini-3.6-flash"
+MODEL_NAME = GEMINI_MODEL
 
 # Safety valve against a runaway tool-call loop — most questions resolve in
 # 1-2 calls, but exploring several files in one answer can take more.

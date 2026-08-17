@@ -1,5 +1,12 @@
+import sqlite3
 import uuid
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
+from app.config import CONVERSATIONS_DB_PATH
+
+DB_PATH = Path(CONVERSATIONS_DB_PATH)
 
 MAX_HISTORY_TURNS = 10
 
@@ -10,13 +17,37 @@ class ConversationTurn:
     content: str
 
 
-@dataclass
-class Conversation:
-    repository_id: str
-    turns: list[ConversationTurn] = field(default_factory=list)
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
-_conversations: dict[str, Conversation] = {}
+@contextmanager
+def _connect():
+    connection = sqlite3.connect(DB_PATH)
+    try:
+        yield connection
+        connection.commit()
+    finally:
+        connection.close()
+
+
+with _connect() as _connection:
+    _connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL,
+            repository_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL
+        )
+        """
+    )
+    _connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_conversation_turns_conversation_id
+        ON conversation_turns (conversation_id)
+        """
+    )
 
 
 def new_conversation_id() -> str:
@@ -24,12 +55,18 @@ def new_conversation_id() -> str:
 
 
 def get_history(conversation_id: str, repository_id: str) -> list[ConversationTurn]:
-    conversation = _conversations.get(conversation_id)
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT role, content FROM conversation_turns
+            WHERE conversation_id = ? AND repository_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (conversation_id, repository_id, MAX_HISTORY_TURNS * 2)
+        ).fetchall()
 
-    if conversation is None or conversation.repository_id != repository_id:
-        return []
-
-    return conversation.turns
+    return [ConversationTurn(role=role, content=content) for role, content in reversed(rows)]
 
 
 def append_turn(
@@ -38,15 +75,29 @@ def append_turn(
     role: str,
     content: str
 ) -> None:
-    conversation = _conversations.get(conversation_id)
-
-    if conversation is None or conversation.repository_id != repository_id:
-        conversation = Conversation(repository_id=repository_id)
-        _conversations[conversation_id] = conversation
-
-    conversation.turns.append(ConversationTurn(role=role, content=content))
-    conversation.turns = conversation.turns[-MAX_HISTORY_TURNS * 2:]
+    with _connect() as connection:
+        # A conversation_id previously used against a different repository
+        # is stale context, not a real history — drop it before adding to
+        # this repository's history, same reset behavior as before.
+        connection.execute(
+            """
+            DELETE FROM conversation_turns
+            WHERE conversation_id = ? AND repository_id != ?
+            """,
+            (conversation_id, repository_id)
+        )
+        connection.execute(
+            """
+            INSERT INTO conversation_turns (conversation_id, repository_id, role, content)
+            VALUES (?, ?, ?, ?)
+            """,
+            (conversation_id, repository_id, role, content)
+        )
 
 
 def clear_conversation(conversation_id: str) -> None:
-    _conversations.pop(conversation_id, None)
+    with _connect() as connection:
+        connection.execute(
+            "DELETE FROM conversation_turns WHERE conversation_id = ?",
+            (conversation_id,)
+        )
