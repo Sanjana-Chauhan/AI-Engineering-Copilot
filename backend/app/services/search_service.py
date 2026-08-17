@@ -9,8 +9,16 @@ DOC_LANGUAGE = "markdown"
 # unrelated filler sits at 0.75+.
 DOC_BACKFILL_MAX_SCORE = 0.65
 
+# When a question is scoped to one file, relevance ranking within that file
+# doesn't matter as much as covering the whole thing — cap generously
+# instead of the usual top-k, so a multi-chunk file doesn't get truncated.
+FILE_SCOPE_CHUNK_LIMIT = 40
 
-def _to_chunks(documents, metadatas, distances) -> list[CodeChunk]:
+
+def _to_chunks(documents, metadatas, distances=None) -> list[CodeChunk]:
+    if distances is None:
+        distances = [None] * len(documents)
+
     return [
         CodeChunk(
             repository_id=metadata["repository_id"],
@@ -29,8 +37,27 @@ def _to_chunks(documents, metadatas, distances) -> list[CodeChunk]:
 def search_code(
     query: str,
     repository_id: str,
-    limit: int = 5
+    limit: int = 5,
+    file_path: str | None = None
 ) -> list[CodeChunk]:
+
+    if file_path:
+        results = collection.get(
+            where={
+                "$and": [
+                    {"repository_id": repository_id},
+                    {"file_path": file_path}
+                ]
+            }
+        )
+
+        chunks = _to_chunks(
+            results.get("documents", []),
+            results.get("metadatas", [])
+        )
+        chunks.sort(key=lambda chunk: chunk.start_line)
+
+        return chunks[:FILE_SCOPE_CHUNK_LIMIT]
 
     code_results = collection.query(
         query_texts=[query],

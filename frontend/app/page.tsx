@@ -19,16 +19,21 @@ interface ChatMessage {
   content: string;
 }
 
-function groupFiles(files: string[]) {
-  const topLevel: string[] = [];
-  const groups = new Map<string, string[]>();
+interface FileEntry {
+  name: string;
+  path: string;
+}
 
-  for (const file of files) {
-    const normalized = file.replace(/\\/g, "/");
+function groupFiles(files: string[]) {
+  const topLevel: FileEntry[] = [];
+  const groups = new Map<string, FileEntry[]>();
+
+  for (const rawPath of files) {
+    const normalized = rawPath.replace(/\\/g, "/");
     const separatorIndex = normalized.indexOf("/");
 
     if (separatorIndex === -1) {
-      topLevel.push(normalized);
+      topLevel.push({ name: normalized, path: rawPath });
       continue;
     }
 
@@ -38,7 +43,7 @@ function groupFiles(files: string[]) {
     if (!groups.has(directory)) {
       groups.set(directory, []);
     }
-    groups.get(directory)!.push(rest);
+    groups.get(directory)!.push({ name: rest, path: rawPath });
   }
 
   return { topLevel, groups };
@@ -116,6 +121,22 @@ function IconSource({ className }: { className?: string }) {
       <path d="M4 6h16" />
       <path d="M4 12h10" />
       <path d="M4 18h7" />
+    </svg>
+  );
+}
+
+function IconClose({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.25}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M18 6 6 18M6 6l12 12" />
     </svg>
   );
 }
@@ -203,6 +224,7 @@ export default function Home() {
   const [repositoryLabel, setRepositoryLabel] = useState<string | null>(null);
   const [files, setFiles] = useState<string[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [loadingRepo, setLoadingRepo] = useState(false);
   const [loadingStage, setLoadingStage] = useState("");
   const [repoError, setRepoError] = useState<string | null>(null);
@@ -257,6 +279,10 @@ export default function Home() {
       container.scrollTop = container.scrollHeight;
     }
   }, [messages]);
+
+  function toggleFileSelection(path: string) {
+    setSelectedFile((previous) => (previous === path ? null : path));
+  }
 
   function toggleDir(directory: string) {
     setExpandedDirs((previous) => {
@@ -330,6 +356,8 @@ export default function Home() {
         source === "github" ? repositoryUrl.trim() : repositoryPath.trim()
       );
       setFiles(scanData.files ?? []);
+      setSelectedFile(null);
+      setExpandedDirs(new Set());
       setMessages([]);
       setSources([]);
       setConversationId(null);
@@ -381,6 +409,7 @@ export default function Home() {
           message: question,
           repository_id: repositoryId,
           conversation_id: conversationId,
+          file_path: selectedFile,
         }),
       });
 
@@ -573,12 +602,20 @@ export default function Home() {
                 )}
 
                 {!loadingRepo && topLevel.map((file) => (
-                  <li
-                    key={file}
-                    className="flex items-center gap-1.5 truncate rounded px-1.5 py-1 text-foreground/85 hover:bg-panel-muted"
-                  >
-                    <IconFile className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-                    {file}
+                  <li key={file.path}>
+                    <button
+                      onClick={() => toggleFileSelection(file.path)}
+                      title="Click to scope your next question to this file"
+                      className={
+                        "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors " +
+                        (selectedFile === file.path
+                          ? "bg-accent/15 text-accent"
+                          : "text-foreground/85 hover:bg-panel-muted")
+                      }
+                    >
+                      <IconFile className="h-3.5 w-3.5 flex-shrink-0" />
+                      <span className="truncate">{file.name}</span>
+                    </button>
                   </li>
                 ))}
 
@@ -602,12 +639,20 @@ export default function Home() {
                       {isOpen && (
                         <ul className="ml-4 mt-0.5 space-y-0.5 border-l border-border pl-2">
                           {dirFiles.map((file) => (
-                            <li
-                              key={file}
-                              className="flex items-center gap-1.5 truncate rounded px-1.5 py-1 text-foreground/70 hover:bg-panel-muted"
-                            >
-                              <IconFile className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-                              {file}
+                            <li key={file.path}>
+                              <button
+                                onClick={() => toggleFileSelection(file.path)}
+                                title="Click to scope your next question to this file"
+                                className={
+                                  "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors " +
+                                  (selectedFile === file.path
+                                    ? "bg-accent/15 text-accent"
+                                    : "text-foreground/70 hover:bg-panel-muted")
+                                }
+                              >
+                                <IconFile className="h-3.5 w-3.5 flex-shrink-0" />
+                                <span className="truncate">{file.name}</span>
+                              </button>
                             </li>
                           ))}
                         </ul>
@@ -757,24 +802,44 @@ export default function Home() {
           </div>
 
           {/* Input bar */}
-          <div className="flex items-center gap-3 border-t border-border p-4">
-            <input
-              type="text"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={handleInputKeyDown}
-              placeholder="Ask about your repository..."
-              disabled={!repositoryId}
-              className={fieldClasses + " py-2.5"}
-            />
-            <button
-              onClick={sendMessage}
-              disabled={!repositoryId || sending}
-              aria-label="Send message"
-              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-hover text-accent-foreground shadow-sm shadow-accent/25 transition hover:brightness-110 disabled:opacity-40"
-            >
-              <IconArrowUp className="h-4.5 w-4.5" />
-            </button>
+          <div className="border-t border-border">
+            {selectedFile && (
+              <div className="flex items-center gap-2 px-4 pt-3">
+                <span className="flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs text-accent">
+                  <IconFile className="h-3 w-3 flex-shrink-0" />
+                  <span className="max-w-[280px] truncate font-mono">
+                    {selectedFile.replace(/\\/g, "/")}
+                  </span>
+                  <button
+                    onClick={() => setSelectedFile(null)}
+                    aria-label="Clear file scope"
+                    className="ml-0.5 flex-shrink-0 text-accent/70 transition-colors hover:text-accent"
+                  >
+                    <IconClose className="h-3 w-3" />
+                  </button>
+                </span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 p-4">
+              <input
+                type="text"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={handleInputKeyDown}
+                placeholder="Ask about your repository..."
+                disabled={!repositoryId}
+                className={fieldClasses + " py-2.5"}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={!repositoryId || sending}
+                aria-label="Send message"
+                className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-hover text-accent-foreground shadow-sm shadow-accent/25 transition hover:brightness-110 disabled:opacity-40"
+              >
+                <IconArrowUp className="h-4.5 w-4.5" />
+              </button>
+            </div>
           </div>
         </div>
       </div>

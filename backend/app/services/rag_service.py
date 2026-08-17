@@ -47,10 +47,22 @@ Content:
     return "\n".join(context_parts)
 
 
-def build_prompt(question: str, chunks: list[CodeChunk], history: list[ConversationTurn]) -> str:
+def build_prompt(
+    question: str,
+    chunks: list[CodeChunk],
+    history: list[ConversationTurn],
+    file_path: str | None = None
+) -> str:
 
     context = build_context(chunks)
     history_block = build_history_block(history)
+
+    scope_rule = (
+        f'- The user has scoped this question to a single file: "{file_path}". '
+        "Focus your answer on that file; only bring in other files if directly relevant."
+        if file_path else
+        "- Use the repository context as the primary source."
+    )
 
     return f"""
 You are an AI Engineering Copilot.
@@ -58,7 +70,7 @@ You are an AI Engineering Copilot.
 Answer the user's question using the repository context provided below.
 
 Rules:
-- Use the repository context as the primary source.
+{scope_rule}
 - [CODE] snippets are the authoritative source of truth about how the system actually works.
 - [DOCUMENTATION] snippets may be outdated. Use them only for high-level framing, and defer to [CODE] whenever the two disagree.
 - Do not invent files or code that are not present.
@@ -77,25 +89,36 @@ User Question:
 """
 
 
+def _no_context_message(file_path: str | None) -> str:
+    if file_path:
+        return (
+            f'I couldn\'t find any indexed content for "{file_path}". '
+            "Make sure the repository has been ingested and that file was included."
+        )
+    return NO_CONTEXT_MESSAGE
+
+
 def answer_repository_question(
     question: str,
     repository_id: str,
     history: list[ConversationTurn] | None = None,
-    limit: int = 5
+    limit: int = 5,
+    file_path: str | None = None
 ):
     chunks = search_code(
         query=question,
         limit=limit,
-        repository_id=repository_id
+        repository_id=repository_id,
+        file_path=file_path
     )
 
     if not chunks:
         return {
-            "answer": NO_CONTEXT_MESSAGE,
+            "answer": _no_context_message(file_path),
             "sources": []
         }
 
-    prompt = build_prompt(question, chunks, history or [])
+    prompt = build_prompt(question, chunks, history or [], file_path)
     answer = generate_response(prompt)
 
     return {
@@ -108,20 +131,24 @@ def answer_repository_question_stream(
     question: str,
     repository_id: str,
     history: list[ConversationTurn] | None = None,
-    limit: int = 5
+    limit: int = 5,
+    file_path: str | None = None
 ):
     chunks = search_code(
         query=question,
         limit=limit,
-        repository_id=repository_id
+        repository_id=repository_id,
+        file_path=file_path
     )
 
     if not chunks:
+        message = _no_context_message(file_path)
+
         def no_context_stream():
-            yield NO_CONTEXT_MESSAGE
+            yield message
 
         return [], no_context_stream()
 
-    prompt = build_prompt(question, chunks, history or [])
+    prompt = build_prompt(question, chunks, history or [], file_path)
 
     return chunks, generate_response_stream(prompt)

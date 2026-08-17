@@ -40,7 +40,8 @@ def chat(request: ChatRequest):
     result = answer_repository_question(
         question=request.message,
         repository_id=request.repository_id,
-        history=history
+        history=history,
+        file_path=request.file_path
     )
 
     conversation_service.append_turn(
@@ -77,7 +78,8 @@ def chat_stream(request: ChatRequest):
     chunks, token_stream = answer_repository_question_stream(
         question=request.message,
         repository_id=request.repository_id,
-        history=history
+        history=history,
+        file_path=request.file_path
     )
 
     sources = _serialize_sources(chunks)

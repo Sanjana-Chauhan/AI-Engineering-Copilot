@@ -5,6 +5,7 @@ class ChatRequest(BaseModel):
     message: str
     repository_id: str
     conversation_id: str | None = None
+    file_path: str | None = None
 
 
 class SourceReference(BaseModel):
