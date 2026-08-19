@@ -23,7 +23,7 @@ Vector store: **ChromaDB** · Embeddings: **sentence-transformers** (local,
 - [Known Limitations](#known-limitations)
 - [Roadmap](#roadmap)
 
----
+---`
 
 ## Features
 
@@ -68,9 +68,11 @@ Vector store: **ChromaDB** · Embeddings: **sentence-transformers** (local,
 
 ---
 
+![alt text](image.png)
+
 ## Architecture
 
-### System overview
+### System overview`
 
 ```mermaid
 flowchart TB

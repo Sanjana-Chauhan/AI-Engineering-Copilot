@@ -4,7 +4,15 @@ import logging
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from app.models.chat import ChatRequest, ChatResponse, DebugRequest, ExplainRequest, SourceReference
+from app.models.chat import (
+    ChatRequest,
+    ChatResponse,
+    ConversationHistoryResponse,
+    ConversationTurnResponse,
+    DebugRequest,
+    ExplainRequest,
+    SourceReference,
+)
 from app.services import conversation_service
 from app.services.rag_service import (
     answer_repository_question,
@@ -243,6 +251,22 @@ def debug_stream(request: DebugRequest):
         yield _sse("done", "{}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/chat/{conversation_id}", response_model=ConversationHistoryResponse)
+def get_conversation_history(conversation_id: str, repository_id: str):
+    history = conversation_service.get_history(
+        conversation_id=conversation_id,
+        repository_id=repository_id
+    )
+
+    return ConversationHistoryResponse(
+        conversation_id=conversation_id,
+        turns=[
+            ConversationTurnResponse(role=turn.role, content=turn.content)
+            for turn in history
+        ]
+    )
 
 
 @router.delete("/chat/{conversation_id}")

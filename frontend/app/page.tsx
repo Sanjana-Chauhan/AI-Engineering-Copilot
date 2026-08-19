@@ -6,6 +6,14 @@ import remarkGfm from "remark-gfm";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
+const STORAGE_KEYS = {
+  source: "copilot:source",
+  repositoryPath: "copilot:repositoryPath",
+  repositoryUrl: "copilot:repositoryUrl",
+  repositoryLabel: "copilot:repositoryLabel",
+  conversationId: "copilot:conversationId",
+} as const;
+
 type RepositorySource = "local" | "github";
 
 interface Source {
@@ -524,6 +532,57 @@ export default function Home() {
     window.localStorage.setItem("theme", theme);
   }, [theme]);
 
+  // Resume the last loaded repository (and its conversation, if any) after a
+  // refresh, by re-running the same clone/scan/ingest pipeline the "Load
+  // Repository" button uses rather than trying to shortcut past it.
+  useEffect(() => {
+    const savedSource = window.localStorage.getItem(STORAGE_KEYS.source);
+    const savedPath = window.localStorage.getItem(STORAGE_KEYS.repositoryPath);
+    const savedUrl = window.localStorage.getItem(STORAGE_KEYS.repositoryUrl);
+    const savedConversationId = window.localStorage.getItem(
+      STORAGE_KEYS.conversationId
+    );
+
+    const resumedSource: RepositorySource = savedSource === "github" ? "github" : "local";
+    const resumedInput = resumedSource === "github" ? savedUrl : savedPath;
+
+    setSource(resumedSource);
+    if (savedPath) setRepositoryPath(savedPath);
+    if (savedUrl) setRepositoryUrl(savedUrl);
+
+    if (resumedInput) {
+      resumeRepository(resumedSource, resumedInput, savedConversationId);
+    }
+    // Runs once on mount to hydrate from localStorage.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.source, source);
+  }, [source]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.repositoryPath, repositoryPath);
+  }, [repositoryPath]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.repositoryUrl, repositoryUrl);
+  }, [repositoryUrl]);
+
+  useEffect(() => {
+    if (repositoryLabel) {
+      window.localStorage.setItem(STORAGE_KEYS.repositoryLabel, repositoryLabel);
+    }
+  }, [repositoryLabel]);
+
+  useEffect(() => {
+    if (conversationId) {
+      window.localStorage.setItem(STORAGE_KEYS.conversationId, conversationId);
+    } else {
+      window.localStorage.removeItem(STORAGE_KEYS.conversationId);
+    }
+  }, [conversationId]);
+
   function toggleFileSelection(path: string) {
     setSelectedFile((previous) => (previous === path ? null : path));
   }
@@ -540,6 +599,63 @@ export default function Home() {
     });
   }
 
+  // Shared by the "Load Repository" button and by resume-on-refresh: both
+  // need to re-run clone/scan/ingest (all idempotent) but only the button
+  // press should reset the active chat.
+  async function performLoad(sourceType: RepositorySource, inputValue: string) {
+    let localPath = inputValue.trim();
+
+    if (sourceType === "github") {
+      setLoadingStage("Cloning repository from GitHub...");
+
+      const cloneResponse = await fetch(
+        `${API_BASE}/api/repository/clone?repository_url=${encodeURIComponent(
+          localPath
+        )}`,
+        { method: "POST" }
+      );
+
+      if (!cloneResponse.ok) {
+        const errorBody = await cloneResponse.json().catch(() => null);
+        throw new Error(errorBody?.detail ?? "Failed to clone repository");
+      }
+
+      const cloneData = await cloneResponse.json();
+      localPath = cloneData.repository_path;
+    }
+
+    setLoadingStage("Scanning files and indexing code...");
+
+    const [ingestResponse, scanResponse] = await Promise.all([
+      fetch(
+        `${API_BASE}/api/repository/ingest?repository_path=${encodeURIComponent(
+          localPath
+        )}`,
+        { method: "POST" }
+      ),
+      fetch(
+        `${API_BASE}/api/repository/scan?repository_path=${encodeURIComponent(
+          localPath
+        )}`
+      ),
+    ]);
+
+    if (!ingestResponse.ok || !scanResponse.ok) {
+      throw new Error("Failed to load repository");
+    }
+
+    const ingestData = await ingestResponse.json();
+    const scanData = await scanResponse.json();
+
+    setRepositoryId(ingestData.repository_id);
+    setRepositoryLabel(inputValue.trim());
+    setFiles(scanData.files ?? []);
+    setSelectedFile(null);
+    setExpandedDirs(new Set());
+
+    return ingestData.repository_id as string;
+  }
+
   async function loadRepository() {
     const inputValue = source === "local" ? repositoryPath : repositoryUrl;
 
@@ -551,57 +667,7 @@ export default function Home() {
     setRepoError(null);
 
     try {
-      let localPath = inputValue.trim();
-
-      if (source === "github") {
-        setLoadingStage("Cloning repository from GitHub...");
-
-        const cloneResponse = await fetch(
-          `${API_BASE}/api/repository/clone?repository_url=${encodeURIComponent(
-            localPath
-          )}`,
-          { method: "POST" }
-        );
-
-        if (!cloneResponse.ok) {
-          const errorBody = await cloneResponse.json().catch(() => null);
-          throw new Error(errorBody?.detail ?? "Failed to clone repository");
-        }
-
-        const cloneData = await cloneResponse.json();
-        localPath = cloneData.repository_path;
-      }
-
-      setLoadingStage("Scanning files and indexing code...");
-
-      const [ingestResponse, scanResponse] = await Promise.all([
-        fetch(
-          `${API_BASE}/api/repository/ingest?repository_path=${encodeURIComponent(
-            localPath
-          )}`,
-          { method: "POST" }
-        ),
-        fetch(
-          `${API_BASE}/api/repository/scan?repository_path=${encodeURIComponent(
-            localPath
-          )}`
-        ),
-      ]);
-
-      if (!ingestResponse.ok || !scanResponse.ok) {
-        throw new Error("Failed to load repository");
-      }
-
-      const ingestData = await ingestResponse.json();
-      const scanData = await scanResponse.json();
-
-      setRepositoryId(ingestData.repository_id);
-      setRepositoryLabel(
-        source === "github" ? repositoryUrl.trim() : repositoryPath.trim()
-      );
-      setFiles(scanData.files ?? []);
-      setSelectedFile(null);
-      setExpandedDirs(new Set());
+      await performLoad(source, inputValue);
       setMessages([]);
       setSources([]);
       setConversationId(null);
@@ -610,6 +676,48 @@ export default function Home() {
     } catch (error) {
       setRepoError(
         error instanceof Error ? error.message : "Could not load that repository."
+      );
+    } finally {
+      setLoadingRepo(false);
+      setLoadingStage("");
+    }
+  }
+
+  async function resumeRepository(
+    sourceType: RepositorySource,
+    inputValue: string,
+    savedConversationId: string | null
+  ) {
+    if (!inputValue.trim() || loadingRepo) {
+      return;
+    }
+
+    setLoadingRepo(true);
+    setRepoError(null);
+
+    try {
+      const loadedRepositoryId = await performLoad(sourceType, inputValue);
+
+      if (savedConversationId) {
+        const historyResponse = await fetch(
+          `${API_BASE}/api/chat/${savedConversationId}?repository_id=${encodeURIComponent(
+            loadedRepositoryId
+          )}`
+        );
+
+        if (historyResponse.ok) {
+          const historyData = await historyResponse.json();
+          const turns = (historyData.turns ?? []) as ChatMessage[];
+
+          if (turns.length > 0) {
+            setMessages(turns);
+            setConversationId(savedConversationId);
+          }
+        }
+      }
+    } catch (error) {
+      setRepoError(
+        error instanceof Error ? error.message : "Could not resume that repository."
       );
     } finally {
       setLoadingRepo(false);

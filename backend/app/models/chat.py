@@ -33,3 +33,13 @@ class ChatResponse(BaseModel):
     message: str
     conversation_id: str
     sources: list[SourceReference] = []
+
+
+class ConversationTurnResponse(BaseModel):
+    role: str
+    content: str
+
+
+class ConversationHistoryResponse(BaseModel):
+    conversation_id: str
+    turns: list[ConversationTurnResponse]
