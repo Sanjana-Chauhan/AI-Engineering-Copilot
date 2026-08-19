@@ -25,20 +25,28 @@ TOOL_DECLARATIONS = [
     types.FunctionDeclaration(
         name="get_file_content",
         description=(
-            "Fetch the full content of one specific file by its exact indexed "
-            "path. Use this when you need to see an entire file rather than a "
-            "partial snippet, e.g. after finding it via search_code or "
-            "list_repository_files."
+            "Fetch the full content of one or more specific files by their "
+            "exact indexed paths. Use this when you need to see an entire "
+            "file rather than a partial snippet, e.g. after finding it via "
+            "search_code or list_repository_files. If you already know you "
+            "need several files (e.g. answering a question that spans every "
+            "route file), pass all of their paths in a single call instead "
+            "of calling this tool once per file — each call costs a full "
+            "round-trip, and there's a limited number of them per answer."
         ),
         parameters_json_schema={
             "type": "object",
             "properties": {
-                "file_path": {
-                    "type": "string",
-                    "description": "Exact indexed file path, e.g. \"app/services/rag_service.py\"."
+                "file_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Exact indexed file paths, e.g. "
+                        "[\"app/main.py\", \"app/routes/chat.py\"]."
+                    )
                 }
             },
-            "required": ["file_path"]
+            "required": ["file_paths"]
         }
     ),
     types.FunctionDeclaration(
@@ -77,9 +85,17 @@ def _run_search_code(repository_id: str, query: str) -> str:
     )
 
 
-def _run_get_file_content(repository_id: str, file_path: str) -> str:
-    content = get_file_content(file_path, repository_id)
-    return content or f'No indexed content found for "{file_path}".'
+def _run_get_file_content(repository_id: str, file_paths: list[str]) -> str:
+    sections = []
+
+    for file_path in file_paths:
+        content = get_file_content(file_path, repository_id)
+        sections.append(
+            f"File: {file_path}\n{content}" if content
+            else f'No indexed content found for "{file_path}".'
+        )
+
+    return "\n\n".join(sections)
 
 
 def _run_list_repository_files(repository_id: str, directory_prefix: str = "") -> str:

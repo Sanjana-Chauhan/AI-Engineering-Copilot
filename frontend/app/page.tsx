@@ -8,8 +8,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000"
 
 const STORAGE_KEYS = {
   source: "copilot:source",
-  repositoryPath: "copilot:repositoryPath",
-  repositoryUrl: "copilot:repositoryUrl",
   repositoryLabel: "copilot:repositoryLabel",
   conversationId: "copilot:conversationId",
 } as const;
@@ -48,8 +46,17 @@ function describeToolCall(name: string, args: Record<string, unknown>): string {
   switch (name) {
     case "search_code":
       return `Searching code for "${args.query ?? ""}"`;
-    case "get_file_content":
-      return `Reading ${String(args.file_path ?? "").replace(/\\/g, "/")}`;
+    case "get_file_content": {
+      const paths = Array.isArray(args.file_paths)
+        ? args.file_paths.map((path) => String(path).replace(/\\/g, "/"))
+        : [];
+
+      if (paths.length <= 1) {
+        return `Reading ${paths[0] ?? ""}`;
+      }
+
+      return `Reading ${paths.length} files (${paths[0]}, …)`;
+    }
     case "list_repository_files":
       return args.directory_prefix
         ? `Listing files under "${args.directory_prefix}"`
@@ -315,22 +322,6 @@ function IconMoon({ className }: { className?: string }) {
   );
 }
 
-function IconWrench({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-    >
-      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-    </svg>
-  );
-}
-
 interface SseEvent {
   event: string;
   data: string;
@@ -479,6 +470,8 @@ export default function Home() {
 
   const [recentRepositories, setRecentRepositories] = useState<RepositoryCatalogEntry[]>([]);
   const [conversationHistory, setConversationHistory] = useState<ConversationCatalogEntry[]>([]);
+  const [showRepoSwitcher, setShowRepoSwitcher] = useState(false);
+  const repoSwitcherRef = useRef<HTMLDivElement>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
@@ -551,26 +544,24 @@ export default function Home() {
 
   // Resume the last loaded repository (and its conversation, if any) after a
   // refresh, by re-running the same clone/scan/ingest pipeline the "Load
-  // Repository" button uses rather than trying to shortcut past it.
+  // Repository" button uses rather than trying to shortcut past it. This is
+  // keyed off `repositoryLabel` (the resolved origin), not the input boxes —
+  // the input boxes are transient typing state and get cleared on success,
+  // so they can't double as "which repo is currently active."
   useEffect(() => {
     const savedSource = window.localStorage.getItem(STORAGE_KEYS.source);
-    const savedPath = window.localStorage.getItem(STORAGE_KEYS.repositoryPath);
-    const savedUrl = window.localStorage.getItem(STORAGE_KEYS.repositoryUrl);
+    const savedLabel = window.localStorage.getItem(STORAGE_KEYS.repositoryLabel);
     const savedConversationId = window.localStorage.getItem(
       STORAGE_KEYS.conversationId
     );
 
     const resumedSource: RepositorySource = savedSource === "github" ? "github" : "local";
-    const resumedInput = resumedSource === "github" ? savedUrl : savedPath;
-
     setSource(resumedSource);
-    if (savedPath) setRepositoryPath(savedPath);
-    if (savedUrl) setRepositoryUrl(savedUrl);
 
     loadRecentRepositories();
 
-    if (resumedInput) {
-      resumeRepository(resumedSource, resumedInput, savedConversationId);
+    if (savedLabel) {
+      resumeRepository(resumedSource, savedLabel, savedConversationId);
     }
     // Runs once on mount to hydrate from localStorage.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -579,14 +570,6 @@ export default function Home() {
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.source, source);
   }, [source]);
-
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.repositoryPath, repositoryPath);
-  }, [repositoryPath]);
-
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.repositoryUrl, repositoryUrl);
-  }, [repositoryUrl]);
 
   useEffect(() => {
     if (repositoryLabel) {
@@ -601,6 +584,21 @@ export default function Home() {
       window.localStorage.removeItem(STORAGE_KEYS.conversationId);
     }
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!showRepoSwitcher) {
+      return;
+    }
+
+    function handleClickOutside(event: MouseEvent) {
+      if (repoSwitcherRef.current && !repoSwitcherRef.current.contains(event.target as Node)) {
+        setShowRepoSwitcher(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showRepoSwitcher]);
 
   function toggleFileSelection(path: string) {
     setSelectedFile((previous) => (previous === path ? null : path));
@@ -718,6 +716,11 @@ export default function Home() {
 
     try {
       await performLoad(source, inputValue);
+      if (source === "local") {
+        setRepositoryPath("");
+      } else {
+        setRepositoryUrl("");
+      }
       setMessages([]);
       setSources([]);
       setConversationId(null);
@@ -776,16 +779,12 @@ export default function Home() {
   }
 
   async function selectRecentRepository(entry: RepositoryCatalogEntry) {
-    if (loadingRepo) {
+    if (loadingRepo || entry.repository_id === repositoryId) {
       return;
     }
 
+    setShowRepoSwitcher(false);
     setSource(entry.source_type);
-    if (entry.source_type === "github") {
-      setRepositoryUrl(entry.path_or_url);
-    } else {
-      setRepositoryPath(entry.path_or_url);
-    }
 
     setLoadingRepo(true);
     setRepoError(null);
@@ -1098,19 +1097,70 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              {repositoryLabel ? (
-                <span className="flex items-center gap-2 rounded-full border border-border bg-panel-muted/70 px-3 py-1.5 text-xs">
-                  <span className="h-1.5 w-1.5 rounded-full bg-success shadow-[0_0_6px_var(--success)]" />
-                  <span className="max-w-[220px] truncate font-medium">
-                    {repositoryLabel}
-                  </span>
+            <div className="relative flex items-center gap-2" ref={repoSwitcherRef}>
+              <button
+                onClick={() => setShowRepoSwitcher((previous) => !previous)}
+                title={repositoryLabel ?? undefined}
+                className={
+                  "flex items-center gap-2 rounded-full border border-border bg-panel-muted/70 px-3 py-1.5 text-xs transition hover:border-accent/40 " +
+                  (repositoryLabel ? "" : "text-muted-foreground")
+                }
+              >
+                <span
+                  className={
+                    "h-1.5 w-1.5 flex-shrink-0 rounded-full " +
+                    (repositoryLabel
+                      ? "bg-success shadow-[0_0_6px_var(--success)]"
+                      : "bg-muted-foreground/50")
+                  }
+                />
+                <span className={"max-w-[220px] truncate " + (repositoryLabel ? "font-medium" : "")}>
+                  {repositoryLabel ?? "No repository loaded"}
                 </span>
-              ) : (
-                <span className="flex items-center gap-2 rounded-full border border-border bg-panel-muted/70 px-3 py-1.5 text-xs text-muted-foreground">
-                  <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50" />
-                  No repository loaded
-                </span>
+                <IconChevron
+                  className={
+                    "h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform " +
+                    (showRepoSwitcher ? "rotate-90" : "")
+                  }
+                />
+              </button>
+
+              {showRepoSwitcher && (
+                <div className="absolute right-0 top-full z-20 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-panel shadow-2xl shadow-black/20 backdrop-blur-xl">
+                  <div className="border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Switch Repository
+                  </div>
+                  <div className="max-h-72 overflow-y-auto p-1.5">
+                    {recentRepositories.length === 0 && (
+                      <p className="px-2.5 py-3 text-xs text-muted-foreground">
+                        No repositories yet — load one to get started.
+                      </p>
+                    )}
+
+                    {recentRepositories.map((entry) => (
+                      <button
+                        key={entry.repository_id}
+                        onClick={() => selectRecentRepository(entry)}
+                        disabled={loadingRepo}
+                        title={entry.path_or_url}
+                        className={
+                          "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors disabled:opacity-50 " +
+                          (entry.repository_id === repositoryId
+                            ? "bg-accent/15 text-accent"
+                            : "text-foreground/85 hover:bg-panel-muted")
+                        }
+                      >
+                        <span className="flex-shrink-0 rounded-full bg-panel-muted px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
+                          {entry.source_type}
+                        </span>
+                        <span className="truncate">{entry.label}</span>
+                        {entry.repository_id === repositoryId && (
+                          <span className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           </header>
@@ -1200,36 +1250,6 @@ export default function Home() {
                   </p>
                 )}
               </div>
-
-              {recentRepositories.length > 0 && (
-                <>
-                  <h3 className="mt-6 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Recent Repositories
-                  </h3>
-                  <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto text-xs">
-                    {recentRepositories.map((entry) => (
-                      <li key={entry.repository_id}>
-                        <button
-                          onClick={() => selectRecentRepository(entry)}
-                          disabled={loadingRepo}
-                          title={entry.path_or_url}
-                          className={
-                            "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
-                            (entry.repository_id === repositoryId
-                              ? "bg-accent/15 text-accent"
-                              : "text-foreground/85 hover:bg-panel-muted")
-                          }
-                        >
-                          <span className="rounded-full bg-panel px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
-                            {entry.source_type}
-                          </span>
-                          <span className="truncate">{entry.label}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
 
               {repositoryId && conversationHistory.length > 0 && (
                 <>
@@ -1421,6 +1441,11 @@ export default function Home() {
                     message.role === "assistant" &&
                     message.content === "";
 
+                  const currentStatus =
+                    isStreamingPlaceholder && message.toolCalls?.length
+                      ? message.toolCalls[message.toolCalls.length - 1]
+                      : null;
+
                   return (
                     <div
                       key={index}
@@ -1436,45 +1461,35 @@ export default function Home() {
                       )}
 
                       <div className="flex max-w-[75%] flex-col gap-1.5">
-                        {!!message.toolCalls?.length && (
-                          <div className="flex flex-col gap-1 border-l-2 border-border pl-2.5">
-                            {message.toolCalls.map((call, callIndex) => {
-                              const isActive =
-                                isStreamingPlaceholder && callIndex === message.toolCalls!.length - 1;
-
-                              return (
-                                <div
-                                  key={callIndex}
-                                  className="flex items-center gap-1.5 text-xs text-muted-foreground"
-                                >
-                                  {isActive ? (
-                                    <IconSpinner className="h-3 w-3 flex-shrink-0 animate-spin" />
-                                  ) : (
-                                    <IconWrench className="h-3 w-3 flex-shrink-0 opacity-60" />
-                                  )}
-                                  <span className="font-mono">{call}</span>
-                                </div>
-                              );
-                            })}
+                        {currentStatus ? (
+                          // Progressive status: only ever the *current* step,
+                          // replaced (not stacked) as new SSE tool_call events
+                          // arrive — remounted via `key` so it fades in on
+                          // each change instead of just snapping.
+                          <div className="flex items-center gap-1.5 rounded-2xl rounded-bl-md border border-border bg-panel-muted/70 px-3.5 py-2.5 text-sm text-muted-foreground shadow-sm">
+                            <IconSpinner className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
+                            <span key={currentStatus} className="status-fade-in truncate font-mono text-xs">
+                              {currentStatus}…
+                            </span>
+                          </div>
+                        ) : (
+                          <div
+                            className={
+                              "px-3.5 py-2.5 text-sm leading-relaxed shadow-sm " +
+                              (message.role === "user"
+                                ? "whitespace-pre-wrap rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent-hover text-accent-foreground"
+                                : "rounded-2xl rounded-bl-md border border-border bg-panel-muted/70 text-foreground")
+                            }
+                          >
+                            {isStreamingPlaceholder ? (
+                              <ThinkingDots />
+                            ) : message.role === "assistant" ? (
+                              <MarkdownMessage content={message.content} />
+                            ) : (
+                              message.content
+                            )}
                           </div>
                         )}
-
-                        <div
-                          className={
-                            "px-3.5 py-2.5 text-sm leading-relaxed shadow-sm " +
-                            (message.role === "user"
-                              ? "whitespace-pre-wrap rounded-2xl rounded-br-md bg-gradient-to-br from-accent to-accent-hover text-accent-foreground"
-                              : "rounded-2xl rounded-bl-md border border-border bg-panel-muted/70 text-foreground")
-                          }
-                        >
-                          {isStreamingPlaceholder ? (
-                            <ThinkingDots />
-                          ) : message.role === "assistant" ? (
-                            <MarkdownMessage content={message.content} />
-                          ) : (
-                            message.content
-                          )}
-                        </div>
                       </div>
                     </div>
                   );

@@ -281,7 +281,15 @@ into `app/config.py`, so you only need to set what you're actually changing
 > regenerated. If `uvicorn` fails to import something, `pip install` the
 > missing package and re-freeze with `pip freeze > requirements.txt`.
 
-Run the API:
+Run the API (Windows, from `backend/`):
+
+```powershell
+.\run.ps1
+```
+
+`run.ps1` always launches `uvicorn` with `venv\Scripts\python.exe` directly,
+so it works whether or not the venv is activated in your current shell.
+Equivalent manually:
 
 ```bash
 uvicorn app.main:app --reload
@@ -292,11 +300,15 @@ uvicorn app.main:app --reload
 > instead of `backend\venv`, imports like `google.genai` will fail with
 > `ImportError: cannot import name 'genai' from 'google'` even though
 > `requirements.txt` lists `google-genai` correctly, because the *system*
-> Python has a different (or no) `google` package. If you hit that error,
-> either re-run `venv\Scripts\activate` first, or sidestep activation
+> Python has a different (or no) `google` package. Worse, if this happens
+> under `--reload`, the crashed process can keep the port bound without
+> ever actually listening — so requests just hang/fail with no obvious
+> server-side error at all. If you hit either symptom: check
+> `Get-NetTCPConnection -LocalPort 8000` for who owns the port, stop it,
+> then either re-run `venv\Scripts\activate` first or sidestep activation
 > entirely with `venv\Scripts\python -m uvicorn app.main:app --reload` (Windows)
-> / `venv/bin/python -m uvicorn app.main:app --reload` (macOS/Linux), which
-> always uses the venv's interpreter regardless of shell state.
+> / `venv/bin/python -m uvicorn app.main:app --reload` (macOS/Linux) — or
+> just use `run.ps1`, which does exactly that.
 
 Backend is now live at `http://127.0.0.1:8000` (interactive docs at `/docs`).
 
