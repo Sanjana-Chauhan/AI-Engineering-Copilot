@@ -30,6 +30,20 @@ interface ChatMessage {
   toolCalls?: string[];
 }
 
+interface RepositoryCatalogEntry {
+  repository_id: string;
+  source_type: RepositorySource;
+  path_or_url: string;
+  label: string;
+  last_ingested_at: string;
+}
+
+interface ConversationCatalogEntry {
+  conversation_id: string;
+  title: string | null;
+  updated_at: string;
+}
+
 function describeToolCall(name: string, args: Record<string, unknown>): string {
   switch (name) {
     case "search_code":
@@ -463,6 +477,9 @@ export default function Home() {
   const [loadingStage, setLoadingStage] = useState("");
   const [repoError, setRepoError] = useState<string | null>(null);
 
+  const [recentRepositories, setRecentRepositories] = useState<RepositoryCatalogEntry[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationCatalogEntry[]>([]);
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [input, setInput] = useState("");
@@ -550,6 +567,8 @@ export default function Home() {
     if (savedPath) setRepositoryPath(savedPath);
     if (savedUrl) setRepositoryUrl(savedUrl);
 
+    loadRecentRepositories();
+
     if (resumedInput) {
       resumeRepository(resumedSource, resumedInput, savedConversationId);
     }
@@ -630,7 +649,7 @@ export default function Home() {
       fetch(
         `${API_BASE}/api/repository/ingest?repository_path=${encodeURIComponent(
           localPath
-        )}`,
+        )}&source_type=${sourceType}&origin=${encodeURIComponent(inputValue.trim())}`,
         { method: "POST" }
       ),
       fetch(
@@ -653,7 +672,38 @@ export default function Home() {
     setSelectedFile(null);
     setExpandedDirs(new Set());
 
+    loadRecentRepositories();
+    loadConversationHistory(ingestData.repository_id);
+
     return ingestData.repository_id as string;
+  }
+
+  async function loadRecentRepositories() {
+    try {
+      const response = await fetch(`${API_BASE}/api/repositories`);
+      if (!response.ok) {
+        return;
+      }
+      const data = await response.json();
+      setRecentRepositories(data.repositories ?? []);
+    } catch {
+      // Non-critical: the sidebar list just stays empty/stale.
+    }
+  }
+
+  async function loadConversationHistory(forRepositoryId: string) {
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/repositories/${forRepositoryId}/conversations`
+      );
+      if (!response.ok) {
+        return;
+      }
+      const data = await response.json();
+      setConversationHistory(data.conversations ?? []);
+    } catch {
+      // Non-critical: the sidebar list just stays empty/stale.
+    }
   }
 
   async function loadRepository() {
@@ -722,6 +772,67 @@ export default function Home() {
     } finally {
       setLoadingRepo(false);
       setLoadingStage("");
+    }
+  }
+
+  async function selectRecentRepository(entry: RepositoryCatalogEntry) {
+    if (loadingRepo) {
+      return;
+    }
+
+    setSource(entry.source_type);
+    if (entry.source_type === "github") {
+      setRepositoryUrl(entry.path_or_url);
+    } else {
+      setRepositoryPath(entry.path_or_url);
+    }
+
+    setLoadingRepo(true);
+    setRepoError(null);
+
+    try {
+      await performLoad(entry.source_type, entry.path_or_url);
+      setMessages([]);
+      setSources([]);
+      setConversationId(null);
+      isPinnedToBottomRef.current = true;
+      setShowJumpToBottom(false);
+    } catch (error) {
+      setRepoError(
+        error instanceof Error ? error.message : "Could not load that repository."
+      );
+    } finally {
+      setLoadingRepo(false);
+      setLoadingStage("");
+    }
+  }
+
+  async function openConversation(entry: ConversationCatalogEntry) {
+    if (!repositoryId || sending || entry.conversation_id === conversationId) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/chat/${entry.conversation_id}?repository_id=${encodeURIComponent(
+          repositoryId
+        )}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to load that conversation.");
+      }
+
+      const data = await response.json();
+      setMessages((data.turns ?? []) as ChatMessage[]);
+      setSources([]);
+      setConversationId(entry.conversation_id);
+      isPinnedToBottomRef.current = true;
+      setShowJumpToBottom(false);
+    } catch (error) {
+      setRepoError(
+        error instanceof Error ? error.message : "Could not load that conversation."
+      );
     }
   }
 
@@ -804,6 +915,9 @@ export default function Home() {
       );
     } finally {
       setSending(false);
+      if (repositoryId) {
+        loadConversationHistory(repositoryId);
+      }
     }
   }
 
@@ -855,6 +969,9 @@ export default function Home() {
       );
     } finally {
       setSending(false);
+      if (repositoryId) {
+        loadConversationHistory(repositoryId);
+      }
     }
   }
 
@@ -908,14 +1025,21 @@ export default function Home() {
       );
     } finally {
       setSending(false);
+      if (repositoryId) {
+        loadConversationHistory(repositoryId);
+      }
     }
   }
 
   async function startNewChat() {
     if (conversationId) {
-      fetch(`${API_BASE}/api/chat/${conversationId}`, { method: "DELETE" }).catch(
-        () => {}
-      );
+      fetch(`${API_BASE}/api/chat/${conversationId}`, { method: "DELETE" })
+        .then(() => {
+          if (repositoryId) {
+            loadConversationHistory(repositoryId);
+          }
+        })
+        .catch(() => {});
     }
     setMessages([]);
     setSources([]);
@@ -1076,6 +1200,63 @@ export default function Home() {
                   </p>
                 )}
               </div>
+
+              {recentRepositories.length > 0 && (
+                <>
+                  <h3 className="mt-6 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Recent Repositories
+                  </h3>
+                  <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto text-xs">
+                    {recentRepositories.map((entry) => (
+                      <li key={entry.repository_id}>
+                        <button
+                          onClick={() => selectRecentRepository(entry)}
+                          disabled={loadingRepo}
+                          title={entry.path_or_url}
+                          className={
+                            "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
+                            (entry.repository_id === repositoryId
+                              ? "bg-accent/15 text-accent"
+                              : "text-foreground/85 hover:bg-panel-muted")
+                          }
+                        >
+                          <span className="rounded-full bg-panel px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
+                            {entry.source_type}
+                          </span>
+                          <span className="truncate">{entry.label}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+
+              {repositoryId && conversationHistory.length > 0 && (
+                <>
+                  <h3 className="mt-6 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    History
+                  </h3>
+                  <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto text-xs">
+                    {conversationHistory.map((entry) => (
+                      <li key={entry.conversation_id}>
+                        <button
+                          onClick={() => openConversation(entry)}
+                          disabled={sending}
+                          title={entry.title ?? "Untitled conversation"}
+                          className={
+                            "flex w-full items-center truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
+                            (entry.conversation_id === conversationId
+                              ? "bg-accent/15 text-accent"
+                              : "text-foreground/85 hover:bg-panel-muted")
+                          }
+                        >
+                          <span className="truncate">{entry.title ?? "Untitled conversation"}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
 
               <h3 className="mt-6 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Files

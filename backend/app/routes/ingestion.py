@@ -3,6 +3,7 @@ import hashlib
 
 from fastapi import APIRouter, HTTPException
 from app.services.vector_store import add_chunks
+from app.services.repository_catalog_service import upsert_repository
 
 from app.services.code_service import (
     chunk_code,
@@ -17,7 +18,11 @@ router = APIRouter(prefix="/api/repository")
 
 
 @router.post("/ingest")
-def ingest_repository(repository_path: str):
+def ingest_repository(
+    repository_path: str,
+    source_type: str = "local",
+    origin: str | None = None
+):
 
     try:
         files = scan_repository(repository_path)
@@ -29,6 +34,15 @@ def ingest_repository(repository_path: str):
         repository_id = hashlib.sha256(
             repository_path.encode()
         ).hexdigest()[:12]
+
+        label = origin or repository_path
+
+        upsert_repository(
+            repository_id=repository_id,
+            source_type=source_type,
+            path_or_url=label,
+            label=label
+        )
 
         for file in files:
 

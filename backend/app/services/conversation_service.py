@@ -1,33 +1,16 @@
-import sqlite3
 import uuid
-from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 
-from app.config import CONVERSATIONS_DB_PATH
-
-DB_PATH = Path(CONVERSATIONS_DB_PATH)
+from app.services.db import connect as _connect
 
 MAX_HISTORY_TURNS = 10
+TITLE_MAX_LENGTH = 80
 
 
 @dataclass
 class ConversationTurn:
     role: str
     content: str
-
-
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-
-@contextmanager
-def _connect():
-    connection = sqlite3.connect(DB_PATH)
-    try:
-        yield connection
-        connection.commit()
-    finally:
-        connection.close()
 
 
 with _connect() as _connection:
@@ -46,6 +29,24 @@ with _connect() as _connection:
         """
         CREATE INDEX IF NOT EXISTS idx_conversation_turns_conversation_id
         ON conversation_turns (conversation_id)
+        """
+    )
+    _connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL UNIQUE,
+            repository_id TEXT NOT NULL,
+            title TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+    _connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_conversations_repository_id
+        ON conversations (repository_id)
         """
     )
 
@@ -94,10 +95,77 @@ def append_turn(
             (conversation_id, repository_id, role, content)
         )
 
+    upsert_conversation(
+        conversation_id=conversation_id,
+        repository_id=repository_id,
+        title=_derive_title(content) if role == "user" else None
+    )
+
+
+def _derive_title(content: str) -> str:
+    single_line = " ".join(content.split())
+    if len(single_line) <= TITLE_MAX_LENGTH:
+        return single_line
+    return single_line[:TITLE_MAX_LENGTH - 1].rstrip() + "…"
+
+
+def upsert_conversation(
+    conversation_id: str,
+    repository_id: str,
+    title: str | None = None
+) -> None:
+    with _connect() as connection:
+        existing = connection.execute(
+            "SELECT id FROM conversations WHERE conversation_id = ?",
+            (conversation_id,)
+        ).fetchone()
+
+        if existing is None:
+            connection.execute(
+                """
+                INSERT INTO conversations
+                    (conversation_id, repository_id, title, created_at, updated_at)
+                VALUES (?, ?, ?, datetime('now'), datetime('now'))
+                """,
+                (conversation_id, repository_id, title)
+            )
+        else:
+            connection.execute(
+                "UPDATE conversations SET updated_at = datetime('now') WHERE conversation_id = ?",
+                (conversation_id,)
+            )
+
+
+def list_conversations(repository_id: str) -> list[dict]:
+    with _connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT conversation_id, title, created_at, updated_at
+            FROM conversations
+            WHERE repository_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (repository_id,)
+        ).fetchall()
+
+    return [
+        {
+            "conversation_id": conversation_id,
+            "title": title,
+            "created_at": created_at,
+            "updated_at": updated_at
+        }
+        for conversation_id, title, created_at, updated_at in rows
+    ]
+
 
 def clear_conversation(conversation_id: str) -> None:
     with _connect() as connection:
         connection.execute(
             "DELETE FROM conversation_turns WHERE conversation_id = ?",
+            (conversation_id,)
+        )
+        connection.execute(
+            "DELETE FROM conversations WHERE conversation_id = ?",
             (conversation_id,)
         )

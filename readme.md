@@ -66,6 +66,16 @@ Vector store: **ChromaDB** · Embeddings: **sentence-transformers** (local,
 - Collapsible file tree, streamed chat bubbles with an animated "thinking"
   indicator, "New Chat" reset, dark/light theme-aware design system.
 
+**Persistent, resumable sessions**
+- The last loaded repository and active conversation are saved to
+  `localStorage`; refreshing the page re-runs the same clone/scan/ingest
+  pipeline (all idempotent) and rehydrates the chat instead of losing it.
+- A **repository catalog** (SQLite) tracks every repository ever ingested —
+  the sidebar's "Recent Repositories" list lets you reload one with a click.
+- A **conversation catalog** (SQLite) tracks every conversation per
+  repository, auto-titled from its first message — the sidebar's "History"
+  list lets you reopen any past conversation for the loaded repository.
+
 ---
 
 ![alt text](image.png)
@@ -79,8 +89,9 @@ flowchart TB
     UI["Next.js Frontend<br/>(page.tsx)"]
 
     subgraph API["FastAPI Backend (app/routes)"]
-        ChatAPI["/api/chat<br/>/api/chat/stream"]
+        ChatAPI["/api/chat<br/>/api/chat/stream<br/>GET+DELETE /api/chat/{id}"]
         RepoAPI["/api/repository/scan<br/>/api/repository/ingest<br/>/api/repository/clone"]
+        CatalogAPI["/api/repositories<br/>/api/repositories/{id}/conversations"]
         SearchAPI["/api/search/code"]
         RagAPI["/api/rag/ask"]
     end
@@ -91,16 +102,19 @@ flowchart TB
         VectorStore["vector_store<br/>add_chunks (ADD/UPDATE/SKIP)"]
         SearchSvc["search_service<br/>search_code"]
         RagSvc["rag_service<br/>build_prompt + answer_*"]
-        ConvSvc["conversation_service<br/>SQLite-backed history"]
+        ConvSvc["conversation_service<br/>SQLite turns + conversation catalog"]
+        RepoCatalogSvc["repository_catalog_service<br/>SQLite repository catalog"]
         LlmSvc["llm_service<br/>Gemini client"]
     end
 
     Chroma[("ChromaDB<br/>data/chroma")]
     Gemini[("Gemini API")]
     Source[("Local folder<br/>or GitHub repo")]
+    SqliteDb[("SQLite<br/>data/conversations.db")]
 
     UI -- "HTTP JSON + SSE" --> ChatAPI
     UI --> RepoAPI
+    UI --> CatalogAPI
     UI --> SearchAPI
 
     RepoAPI --> RepoSvc
@@ -109,6 +123,12 @@ flowchart TB
     CodeSvc --> Source
     CodeSvc --> VectorStore
     VectorStore --> Chroma
+
+    RepoAPI --> RepoCatalogSvc
+    CatalogAPI --> RepoCatalogSvc
+    CatalogAPI --> ConvSvc
+    RepoCatalogSvc --> SqliteDb
+    ConvSvc --> SqliteDb
 
     SearchAPI --> SearchSvc
     SearchSvc --> VectorStore
@@ -177,19 +197,21 @@ AI-Engineering-Copilot/
 │   │   │   ├── chat.py                # ChatRequest, ChatResponse, SourceReference
 │   │   │   └── code.py                # CodeChunk
 │   │   ├── routes/
-│   │   │   ├── chat.py                # POST /api/chat, POST /api/chat/stream, DELETE /api/chat/{id}
-│   │   │   ├── repository.py          # GET /api/repository/scan, POST /clone
+│   │   │   ├── chat.py                # POST/GET /api/chat, POST /api/chat/stream, DELETE /api/chat/{id}
+│   │   │   ├── repository.py          # GET /api/repository/scan, POST /clone, GET /api/repositories(+/{id}/conversations)
 │   │   │   ├── ingestion.py           # POST /api/repository/ingest
 │   │   │   ├── search.py              # GET /api/search/code
 │   │   │   └── rag.py                 # GET /api/rag/ask
 │   │   └── services/
+│   │       ├── db.py                  # shared SQLite connection helper (data/conversations.db)
 │   │       ├── repository_service.py  # scan_repository, clone_github_repository
+│   │       ├── repository_catalog_service.py # repository catalog: upsert_repository, list_repositories
 │   │       ├── code_service.py        # read_file, chunk_code, get_language
 │   │       ├── vector_store.py        # ChromaDB client, add_chunks (ADD/UPDATE/SKIP)
 │   │       ├── search_service.py      # search_code
 │   │       ├── rag_service.py         # build_prompt, answer_repository_question(_stream)
 │   │       ├── tool_service.py        # tool declarations + executor for AI tool calling
-│   │       ├── conversation_service.py# per-repository chat history (SQLite-backed)
+│   │       ├── conversation_service.py# chat history + conversation catalog (SQLite-backed)
 │   │       └── llm_service.py         # Gemini client, generate_response(_stream), generate_with_tools(_stream)
 │   ├── data/chroma/                   # persistent ChromaDB store (gitignored)
 │   ├── data/conversations.db          # persistent conversation history (gitignored)
@@ -264,6 +286,17 @@ Run the API:
 uvicorn app.main:app --reload
 ```
 
+> **Every new shell needs the venv re-activated.** A bare `uvicorn` command
+> resolves whatever's first on `PATH` — if that's a system-wide Python
+> instead of `backend\venv`, imports like `google.genai` will fail with
+> `ImportError: cannot import name 'genai' from 'google'` even though
+> `requirements.txt` lists `google-genai` correctly, because the *system*
+> Python has a different (or no) `google` package. If you hit that error,
+> either re-run `venv\Scripts\activate` first, or sidestep activation
+> entirely with `venv\Scripts\python -m uvicorn app.main:app --reload` (Windows)
+> / `venv/bin/python -m uvicorn app.main:app --reload` (macOS/Linux), which
+> always uses the venv's interpreter regardless of shell state.
+
 Backend is now live at `http://127.0.0.1:8000` (interactive docs at `/docs`).
 
 ### Frontend
@@ -308,7 +341,10 @@ All routes are mounted with an `/api` prefix except the two health routes.
 | `GET` | `/api/rag/ask` | One-shot RAG question/answer (non-streaming) |
 | `POST` | `/api/chat` | RAG chat with conversation history (non-streaming) |
 | `POST` | `/api/chat/stream` | Same as above, streamed via Server-Sent Events |
+| `GET` | `/api/chat/{conversation_id}` | Fetch a conversation's full turn history (for resuming) |
 | `DELETE` | `/api/chat/{conversation_id}` | Clear a conversation's stored history |
+| `GET` | `/api/repositories` | List every previously ingested repository, most recent first |
+| `GET` | `/api/repositories/{repository_id}/conversations` | List conversations recorded for a repository |
 
 ### `GET /api/repository/scan`
 
@@ -393,6 +429,55 @@ line of text within a single event), so the client reconstructs internal
 newlines by joining `data:` lines rather than treating every `data:` line
 as a separate token.
 
+### `GET /api/chat/{conversation_id}`
+
+```
+GET /api/chat/26cbde98-...?repository_id=a28a00dec879
+```
+```json
+{
+  "conversation_id": "26cbde98-...",
+  "turns": [
+    { "role": "user", "content": "How is the chat endpoint implemented?" },
+    { "role": "assistant", "content": "..." }
+  ]
+}
+```
+Reuses the same `conversation_service.get_history` the chat endpoints already
+call internally — capped to the last 10 turns, same as live chat.
+
+### `GET /api/repositories`
+
+```json
+{
+  "repositories": [
+    {
+      "repository_id": "a28a00dec879",
+      "source_type": "local",
+      "path_or_url": "C:\\path\\to\\repo",
+      "label": "C:\\path\\to\\repo",
+      "first_ingested_at": "2026-08-19 08:56:04",
+      "last_ingested_at": "2026-08-19 09:10:12"
+    }
+  ]
+}
+```
+
+### `GET /api/repositories/{repository_id}/conversations`
+
+```json
+{
+  "conversations": [
+    {
+      "conversation_id": "26cbde98-...",
+      "title": "How is the chat endpoint implemented?",
+      "created_at": "2026-08-19 08:56:04",
+      "updated_at": "2026-08-19 09:02:31"
+    }
+  ]
+}
+```
+
 ---
 
 ## Core Concepts
@@ -424,6 +509,17 @@ SQLite database (`data/conversations.db`), keyed by `conversation_id` +
 its old turns are discarded rather than leaking context from the wrong
 repo. Reads are capped to the last 10 turns to bound prompt size.
 
+**Persistence & resume.** Two catalog tables live alongside
+`conversation_turns` in the same SQLite file: `repositories` (upserted on
+every `/api/repository/ingest` call) and `conversations` (upserted on every
+`append_turn`, auto-titled from the first user message). The frontend
+persists the active repository path/URL and `conversation_id` to
+`localStorage`; on load, it re-runs the *exact same* clone/scan/ingest
+pipeline the "Load Repository" button uses — all three steps are already
+idempotent (git `pull --ff-only`, and ChromaDB's ADD/UPDATE/SKIP sync) — so
+resuming never risks skipping past real state to something stale. This is
+also what powers the sidebar's "Recent Repositories" and "History" lists.
+
 ---
 
 ## Known Limitations
@@ -432,6 +528,15 @@ repo. Reads are capped to the last 10 turns to bound prompt size.
 - **`requirements.txt` may be incomplete** relative to actual imports
   (e.g. `chromadb`, `sentence-transformers`); regenerate it periodically
   with `pip freeze`.
+- **`uvicorn` must run from `backend/venv`** — if it's launched with a
+  different Python interpreter (e.g. a system-wide install, or a fresh
+  shell where the venv wasn't (re-)activated), imports like `google.genai`
+  will fail even though `requirements.txt` lists them correctly. See
+  [Getting Started](#getting-started) and Interview Prep problem #10.
+- **No cleanup for the repository/conversation catalog** — every ingested
+  repository and every conversation is kept forever (`repositories` and
+  `conversations` tables in `data/conversations.db`); there's no delete
+  action or expiry yet, so storage grows unbounded over long-term use.
 
 ---
 
@@ -443,9 +548,14 @@ code-primary/doc-backup retrieval, RAG-connected chat, source attribution,
 multi-turn conversation history (persisted to SQLite, survives restarts),
 SSE streaming, redesigned 3-panel UI with light/dark theming, Markdown
 rendering in chat, repository/file-scoped chat, code explanation workflow,
-debugging workflow (stack-trace-aware retrieval), and AI tool calling
+debugging workflow (stack-trace-aware retrieval), AI tool calling
 (search_code / get_file_content / list_repository_files, available to the
-model during regular chat).
+model during regular chat), resume-on-refresh (repository + conversation
+persisted to `localStorage`), and a browsable repository/conversation
+catalog (sidebar "Recent Repositories" + "History" lists, backed by new
+SQLite tables).
 
 **Next:**
+- Delete/cleanup action for old repositories and conversations (the catalog
+  currently only grows)
 - Automated tests

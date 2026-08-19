@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import ALLOWED_ORIGINS
 from app.routes.chat import router as chat_router
-from app.routes.repository import router as repository_router
+from app.routes.repository import router as repository_router, catalog_router as repository_catalog_router
 from app.routes.ingestion import router as ingestion_router
 from app.routes.search import router as search_router
 from app.routes.rag import router as rag_router
@@ -22,6 +22,7 @@ app.add_middleware(
 
 app.include_router(chat_router)
 app.include_router(repository_router)
+app.include_router(repository_catalog_router)
 app.include_router(ingestion_router)
 app.include_router(search_router)
 app.include_router(rag_router)
