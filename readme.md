@@ -65,6 +65,7 @@ Vector store: **ChromaDB** · Embeddings: **sentence-transformers** (local,
 - Local-path or GitHub-URL repository loader with live status.
 - Collapsible file tree, streamed chat bubbles with an animated "thinking"
   indicator, "New Chat" reset, dark/light theme-aware design system.
+ <img width="958" height="473" alt="image" src="https://github.com/user-attachments/assets/55b63c0e-5f3f-4b69-9a90-f730b0c2306a" />
 
 **Persistent, resumable sessions**
 - The last loaded repository and active conversation are saved to
