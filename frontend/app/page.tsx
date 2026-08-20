@@ -6,12 +6,6 @@ import remarkGfm from "remark-gfm";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
-const STORAGE_KEYS = {
-  source: "copilot:source",
-  repositoryLabel: "copilot:repositoryLabel",
-  conversationId: "copilot:conversationId",
-} as const;
-
 type RepositorySource = "local" | "github";
 
 interface Source {
@@ -322,6 +316,39 @@ function IconMoon({ className }: { className?: string }) {
   );
 }
 
+function IconChat({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-4 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" />
+    </svg>
+  );
+}
+
+function IconLayers({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M12 3 3 8l9 5 9-5-9-5z" />
+      <path d="M3 13l9 5 9-5" />
+    </svg>
+  );
+}
+
 interface SseEvent {
   event: string;
   data: string;
@@ -454,6 +481,20 @@ function MarkdownMessage({ content }: { content: string }) {
 
 type Theme = "light" | "dark";
 
+type SidebarTab = "files" | "chats" | "repositories";
+
+// Activity-bar config: adding a future tab is a new entry here (plus its
+// content block below) — not a sidebar redesign.
+const SIDEBAR_TABS: {
+  id: SidebarTab;
+  label: string;
+  icon: (props: { className?: string }) => React.JSX.Element;
+}[] = [
+  { id: "files", label: "Files", icon: IconFile },
+  { id: "chats", label: "Chats", icon: IconChat },
+  { id: "repositories", label: "Repositories", icon: IconLayers },
+];
+
 export default function Home() {
   const [theme, setTheme] = useState<Theme>("light");
   const [source, setSource] = useState<RepositorySource>("local");
@@ -470,8 +511,7 @@ export default function Home() {
 
   const [recentRepositories, setRecentRepositories] = useState<RepositoryCatalogEntry[]>([]);
   const [conversationHistory, setConversationHistory] = useState<ConversationCatalogEntry[]>([]);
-  const [showRepoSwitcher, setShowRepoSwitcher] = useState(false);
-  const repoSwitcherRef = useRef<HTMLDivElement>(null);
+  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("files");
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
@@ -542,63 +582,13 @@ export default function Home() {
     window.localStorage.setItem("theme", theme);
   }, [theme]);
 
-  // Resume the last loaded repository (and its conversation, if any) after a
-  // refresh, by re-running the same clone/scan/ingest pipeline the "Load
-  // Repository" button uses rather than trying to shortcut past it. This is
-  // keyed off `repositoryLabel` (the resolved origin), not the input boxes —
-  // the input boxes are transient typing state and get cleared on success,
-  // so they can't double as "which repo is currently active."
+  // The app always opens blank — no auto-loading a previous repository.
+  // Only the catalog list (for the Repositories tab) is fetched up front;
+  // loading an actual repo is always an explicit user action.
   useEffect(() => {
-    const savedSource = window.localStorage.getItem(STORAGE_KEYS.source);
-    const savedLabel = window.localStorage.getItem(STORAGE_KEYS.repositoryLabel);
-    const savedConversationId = window.localStorage.getItem(
-      STORAGE_KEYS.conversationId
-    );
-
-    const resumedSource: RepositorySource = savedSource === "github" ? "github" : "local";
-    setSource(resumedSource);
-
     loadRecentRepositories();
-
-    if (savedLabel) {
-      resumeRepository(resumedSource, savedLabel, savedConversationId);
-    }
-    // Runs once on mount to hydrate from localStorage.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.source, source);
-  }, [source]);
-
-  useEffect(() => {
-    if (repositoryLabel) {
-      window.localStorage.setItem(STORAGE_KEYS.repositoryLabel, repositoryLabel);
-    }
-  }, [repositoryLabel]);
-
-  useEffect(() => {
-    if (conversationId) {
-      window.localStorage.setItem(STORAGE_KEYS.conversationId, conversationId);
-    } else {
-      window.localStorage.removeItem(STORAGE_KEYS.conversationId);
-    }
-  }, [conversationId]);
-
-  useEffect(() => {
-    if (!showRepoSwitcher) {
-      return;
-    }
-
-    function handleClickOutside(event: MouseEvent) {
-      if (repoSwitcherRef.current && !repoSwitcherRef.current.contains(event.target as Node)) {
-        setShowRepoSwitcher(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [showRepoSwitcher]);
 
   function toggleFileSelection(path: string) {
     setSelectedFile((previous) => (previous === path ? null : path));
@@ -669,6 +659,7 @@ export default function Home() {
     setFiles(scanData.files ?? []);
     setSelectedFile(null);
     setExpandedDirs(new Set());
+    setActiveSidebarTab("files");
 
     loadRecentRepositories();
     loadConversationHistory(ingestData.repository_id);
@@ -736,54 +727,11 @@ export default function Home() {
     }
   }
 
-  async function resumeRepository(
-    sourceType: RepositorySource,
-    inputValue: string,
-    savedConversationId: string | null
-  ) {
-    if (!inputValue.trim() || loadingRepo) {
-      return;
-    }
-
-    setLoadingRepo(true);
-    setRepoError(null);
-
-    try {
-      const loadedRepositoryId = await performLoad(sourceType, inputValue);
-
-      if (savedConversationId) {
-        const historyResponse = await fetch(
-          `${API_BASE}/api/chat/${savedConversationId}?repository_id=${encodeURIComponent(
-            loadedRepositoryId
-          )}`
-        );
-
-        if (historyResponse.ok) {
-          const historyData = await historyResponse.json();
-          const turns = (historyData.turns ?? []) as ChatMessage[];
-
-          if (turns.length > 0) {
-            setMessages(turns);
-            setConversationId(savedConversationId);
-          }
-        }
-      }
-    } catch (error) {
-      setRepoError(
-        error instanceof Error ? error.message : "Could not resume that repository."
-      );
-    } finally {
-      setLoadingRepo(false);
-      setLoadingStage("");
-    }
-  }
-
   async function selectRecentRepository(entry: RepositoryCatalogEntry) {
     if (loadingRepo || entry.repository_id === repositoryId) {
       return;
     }
 
-    setShowRepoSwitcher(false);
     setSource(entry.source_type);
 
     setLoadingRepo(true);
@@ -1097,10 +1045,10 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="relative flex items-center gap-2" ref={repoSwitcherRef}>
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => setShowRepoSwitcher((previous) => !previous)}
-                title={repositoryLabel ?? undefined}
+                onClick={() => setActiveSidebarTab("repositories")}
+                title="Switch repository"
                 className={
                   "flex items-center gap-2 rounded-full border border-border bg-panel-muted/70 px-3 py-1.5 text-xs transition hover:border-accent/40 " +
                   (repositoryLabel ? "" : "text-muted-foreground")
@@ -1117,249 +1065,293 @@ export default function Home() {
                 <span className={"max-w-[220px] truncate " + (repositoryLabel ? "font-medium" : "")}>
                   {repositoryLabel ?? "No repository loaded"}
                 </span>
-                <IconChevron
-                  className={
-                    "h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform " +
-                    (showRepoSwitcher ? "rotate-90" : "")
-                  }
-                />
               </button>
-
-              {showRepoSwitcher && (
-                <div className="absolute right-0 top-full z-20 mt-2 w-80 overflow-hidden rounded-xl border border-border bg-panel shadow-2xl shadow-black/20 backdrop-blur-xl">
-                  <div className="border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Switch Repository
-                  </div>
-                  <div className="max-h-72 overflow-y-auto p-1.5">
-                    {recentRepositories.length === 0 && (
-                      <p className="px-2.5 py-3 text-xs text-muted-foreground">
-                        No repositories yet — load one to get started.
-                      </p>
-                    )}
-
-                    {recentRepositories.map((entry) => (
-                      <button
-                        key={entry.repository_id}
-                        onClick={() => selectRecentRepository(entry)}
-                        disabled={loadingRepo}
-                        title={entry.path_or_url}
-                        className={
-                          "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-colors disabled:opacity-50 " +
-                          (entry.repository_id === repositoryId
-                            ? "bg-accent/15 text-accent"
-                            : "text-foreground/85 hover:bg-panel-muted")
-                        }
-                      >
-                        <span className="flex-shrink-0 rounded-full bg-panel-muted px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
-                          {entry.source_type}
-                        </span>
-                        <span className="truncate">{entry.label}</span>
-                        {entry.repository_id === repositoryId && (
-                          <span className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           </header>
 
           <div className="flex flex-1 overflow-hidden divide-x divide-border">
-            {/* Repository / Files panel */}
+            {/* Activity bar — one icon per major feature; adding a future
+                feature is a new SIDEBAR_TABS entry + content block, not a
+                sidebar redesign. */}
+            <nav className="flex w-14 flex-shrink-0 flex-col items-center gap-1 border-r border-border bg-panel-muted/40 py-3">
+              {SIDEBAR_TABS.map((tab) => {
+                const Icon = tab.icon;
+                const isActive = activeSidebarTab === tab.id;
+
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveSidebarTab(tab.id)}
+                    title={tab.label}
+                    aria-pressed={isActive}
+                    className={
+                      "flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg transition-colors " +
+                      (isActive
+                        ? "bg-accent/15 text-accent"
+                        : "text-muted-foreground hover:bg-panel-muted hover:text-foreground")
+                    }
+                  >
+                    <Icon className="h-5 w-5" />
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Sidebar content — only the active tab's panel renders */}
             <aside className="flex w-72 flex-col overflow-hidden bg-panel-muted/30">
             <div className="flex-1 overflow-y-auto p-4">
-              <h2 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <span className="h-1.5 w-1.5 rounded-full bg-tint-repo" />
-                Repository
-              </h2>
-
-              <div className="mt-3 flex rounded-lg border border-border bg-panel-muted/60 p-1 text-xs">
-                <button
-                  onClick={() => setSource("local")}
-                  disabled={loadingRepo}
-                  className={
-                    "flex-1 rounded-md px-2 py-1.5 font-medium transition-all disabled:opacity-50 " +
-                    (source === "local"
-                      ? "bg-gradient-to-r from-accent to-accent-hover text-accent-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground")
-                  }
-                >
-                  Local Path
-                </button>
-                <button
-                  onClick={() => setSource("github")}
-                  disabled={loadingRepo}
-                  className={
-                    "flex-1 rounded-md px-2 py-1.5 font-medium transition-all disabled:opacity-50 " +
-                    (source === "github"
-                      ? "bg-gradient-to-r from-accent to-accent-hover text-accent-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground")
-                  }
-                >
-                  GitHub
-                </button>
-              </div>
-
-              <div className="mt-3 flex flex-col gap-2">
-                {source === "local" ? (
-                  <input
-                    type="text"
-                    value={repositoryPath}
-                    onChange={(event) => setRepositoryPath(event.target.value)}
-                    placeholder="C:\path\to\repository"
-                    disabled={loadingRepo}
-                    className={fieldClasses + " disabled:opacity-50"}
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    value={repositoryUrl}
-                    onChange={(event) => setRepositoryUrl(event.target.value)}
-                    placeholder="https://github.com/owner/repo"
-                    disabled={loadingRepo}
-                    className={fieldClasses + " disabled:opacity-50"}
-                  />
-                )}
-
-                <button
-                  onClick={loadRepository}
-                  disabled={loadingRepo}
-                  className="flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-button-from to-button-to px-2 py-2 text-sm font-medium text-button-foreground shadow-sm shadow-accent/20 transition hover:brightness-105 disabled:opacity-50"
-                >
-                  {loadingRepo && (
-                    <IconSpinner className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
-                  )}
-                  {loadingRepo ? "Working..." : "Load Repository"}
-                </button>
-
-                {loadingRepo && (
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <IconSpinner className="h-3 w-3 flex-shrink-0 animate-spin" />
-                    {loadingStage}
-                  </p>
-                )}
-
-                {repoError && (
-                  <p className="text-xs text-red-500">{repoError}</p>
-                )}
-
-                {repositoryId && !loadingRepo && (
-                  <p className="truncate text-xs text-muted-foreground">
-                    ID: <span className="font-mono">{repositoryId}</span>
-                  </p>
-                )}
-              </div>
-
-              {repositoryId && conversationHistory.length > 0 && (
+              {activeSidebarTab === "files" && (
                 <>
-                  <h3 className="mt-6 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    History
-                  </h3>
-                  <ul className="mt-2 max-h-40 space-y-0.5 overflow-y-auto text-xs">
-                    {conversationHistory.map((entry) => (
-                      <li key={entry.conversation_id}>
+                  <h2 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <IconFile className="h-3.5 w-3.5 text-tint-repo" />
+                    Files
+                  </h2>
+
+                  <ul className="mt-3 space-y-0.5 font-mono text-xs">
+                    {loadingRepo && (
+                      <li className="flex items-center gap-1.5 px-1.5 py-1 font-sans text-muted-foreground">
+                        <IconSpinner className="h-3 w-3 flex-shrink-0 animate-spin" />
+                        {loadingStage || "Loading repository..."}
+                      </li>
+                    )}
+
+                    {!loadingRepo && topLevel.map((file) => (
+                      <li key={file.path}>
                         <button
-                          onClick={() => openConversation(entry)}
-                          disabled={sending}
-                          title={entry.title ?? "Untitled conversation"}
+                          onClick={() => toggleFileSelection(file.path)}
+                          title="Click to scope your next question to this file"
                           className={
-                            "flex w-full items-center truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
-                            (entry.conversation_id === conversationId
+                            "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors " +
+                            (selectedFile === file.path
                               ? "bg-accent/15 text-accent"
                               : "text-foreground/85 hover:bg-panel-muted")
                           }
                         >
-                          <span className="truncate">{entry.title ?? "Untitled conversation"}</span>
+                          <IconFile
+                            className={"h-3.5 w-3.5 flex-shrink-0 " + fileColorClass(file.path)}
+                          />
+                          <span className="truncate">{file.name}</span>
+                        </button>
+                      </li>
+                    ))}
+
+                    {!loadingRepo && Array.from(groups.entries()).map(([directory, dirFiles]) => {
+                      const isOpen = expandedDirs.has(directory);
+                      return (
+                        <li key={directory}>
+                          <button
+                            onClick={() => toggleDir(directory)}
+                            className="flex w-full items-center gap-1 rounded px-1.5 py-1 text-left font-medium text-foreground/90 hover:bg-panel-muted"
+                          >
+                            <IconChevron
+                              className={
+                                "h-3 w-3 flex-shrink-0 transition-transform " +
+                                (isOpen ? "rotate-90" : "")
+                              }
+                            />
+                            {directory}/
+                          </button>
+
+                          {isOpen && (
+                            <ul className="ml-4 mt-0.5 space-y-0.5 border-l border-border pl-2">
+                              {dirFiles.map((file) => (
+                                <li key={file.path}>
+                                  <button
+                                    onClick={() => toggleFileSelection(file.path)}
+                                    title="Click to scope your next question to this file"
+                                    className={
+                                      "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors " +
+                                      (selectedFile === file.path
+                                        ? "bg-accent/15 text-accent"
+                                        : "text-foreground/70 hover:bg-panel-muted")
+                                    }
+                                  >
+                                    <IconFile
+                                      className={"h-3.5 w-3.5 flex-shrink-0 " + fileColorClass(file.path)}
+                                    />
+                                    <span className="truncate">{file.name}</span>
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
+
+                    {!loadingRepo && files.length === 0 && (
+                      <li className="px-1.5 py-1 font-sans text-muted-foreground">
+                        No repository loaded
+                      </li>
+                    )}
+                  </ul>
+                </>
+              )}
+
+              {activeSidebarTab === "chats" && (
+                <>
+                  <h2 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <IconChat className="h-3.5 w-3.5 text-tint-chat" />
+                    Chats
+                  </h2>
+
+                  {!repositoryId && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Load a repository to see its conversation history.
+                    </p>
+                  )}
+
+                  {repositoryId && conversationHistory.length === 0 && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      No conversations yet for this repository.
+                    </p>
+                  )}
+
+                  {repositoryId && conversationHistory.length > 0 && (
+                    <ul className="mt-3 space-y-0.5 text-xs">
+                      {conversationHistory.map((entry) => (
+                        <li key={entry.conversation_id}>
+                          <button
+                            onClick={() => openConversation(entry)}
+                            disabled={sending}
+                            title={entry.title ?? "Untitled conversation"}
+                            className={
+                              "flex w-full items-center truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
+                              (entry.conversation_id === conversationId
+                                ? "bg-accent/15 text-accent"
+                                : "text-foreground/85 hover:bg-panel-muted")
+                            }
+                          >
+                            <span className="truncate">{entry.title ?? "Untitled conversation"}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+
+              {activeSidebarTab === "repositories" && (
+                <>
+                  <h2 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <IconLayers className="h-3.5 w-3.5 text-tint-repo" />
+                    Repositories
+                  </h2>
+
+                  <div className="mt-3 flex rounded-lg border border-border bg-panel-muted/60 p-1 text-xs">
+                    <button
+                      onClick={() => setSource("local")}
+                      disabled={loadingRepo}
+                      className={
+                        "flex-1 rounded-md px-2 py-1.5 font-medium transition-all disabled:opacity-50 " +
+                        (source === "local"
+                          ? "bg-gradient-to-r from-accent to-accent-hover text-accent-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground")
+                      }
+                    >
+                      Local Path
+                    </button>
+                    <button
+                      onClick={() => setSource("github")}
+                      disabled={loadingRepo}
+                      className={
+                        "flex-1 rounded-md px-2 py-1.5 font-medium transition-all disabled:opacity-50 " +
+                        (source === "github"
+                          ? "bg-gradient-to-r from-accent to-accent-hover text-accent-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground")
+                      }
+                    >
+                      GitHub
+                    </button>
+                  </div>
+
+                  <div className="mt-3 flex flex-col gap-2">
+                    {source === "local" ? (
+                      <input
+                        type="text"
+                        value={repositoryPath}
+                        onChange={(event) => setRepositoryPath(event.target.value)}
+                        placeholder="C:\path\to\repository"
+                        disabled={loadingRepo}
+                        className={fieldClasses + " disabled:opacity-50"}
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={repositoryUrl}
+                        onChange={(event) => setRepositoryUrl(event.target.value)}
+                        placeholder="https://github.com/owner/repo"
+                        disabled={loadingRepo}
+                        className={fieldClasses + " disabled:opacity-50"}
+                      />
+                    )}
+
+                    <button
+                      onClick={loadRepository}
+                      disabled={loadingRepo}
+                      className="flex items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-button-from to-button-to px-2 py-2 text-sm font-medium text-button-foreground shadow-sm shadow-accent/20 transition hover:brightness-105 disabled:opacity-50"
+                    >
+                      {loadingRepo && (
+                        <IconSpinner className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
+                      )}
+                      {loadingRepo ? "Working..." : "Load Repository"}
+                    </button>
+
+                    {loadingRepo && (
+                      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <IconSpinner className="h-3 w-3 flex-shrink-0 animate-spin" />
+                        {loadingStage}
+                      </p>
+                    )}
+
+                    {repoError && (
+                      <p className="text-xs text-red-500">{repoError}</p>
+                    )}
+
+                    {repositoryId && !loadingRepo && (
+                      <p className="truncate text-xs text-muted-foreground">
+                        ID: <span className="font-mono">{repositoryId}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  <h3 className="mt-6 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Recent
+                  </h3>
+
+                  <ul className="mt-2 space-y-0.5 text-xs">
+                    {recentRepositories.length === 0 && (
+                      <li className="px-1.5 py-1 text-muted-foreground">
+                        No repositories yet.
+                      </li>
+                    )}
+
+                    {recentRepositories.map((entry) => (
+                      <li key={entry.repository_id}>
+                        <button
+                          onClick={() => selectRecentRepository(entry)}
+                          disabled={loadingRepo}
+                          title={entry.path_or_url}
+                          className={
+                            "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
+                            (entry.repository_id === repositoryId
+                              ? "bg-accent/15 text-accent"
+                              : "text-foreground/85 hover:bg-panel-muted")
+                          }
+                        >
+                          <span className="flex-shrink-0 rounded-full bg-panel px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
+                            {entry.source_type}
+                          </span>
+                          <span className="truncate">{entry.label}</span>
+                          {entry.repository_id === repositoryId && (
+                            <span className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
+                          )}
                         </button>
                       </li>
                     ))}
                   </ul>
                 </>
               )}
-
-              <h3 className="mt-6 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Files
-              </h3>
-
-              <ul className="mt-2 space-y-0.5 font-mono text-xs">
-                {loadingRepo && (
-                  <li className="flex items-center gap-1.5 px-1.5 py-1 font-sans text-muted-foreground">
-                    <IconSpinner className="h-3 w-3 flex-shrink-0 animate-spin" />
-                    {loadingStage || "Loading repository..."}
-                  </li>
-                )}
-
-                {!loadingRepo && topLevel.map((file) => (
-                  <li key={file.path}>
-                    <button
-                      onClick={() => toggleFileSelection(file.path)}
-                      title="Click to scope your next question to this file"
-                      className={
-                        "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors " +
-                        (selectedFile === file.path
-                          ? "bg-accent/15 text-accent"
-                          : "text-foreground/85 hover:bg-panel-muted")
-                      }
-                    >
-                      <IconFile
-                        className={"h-3.5 w-3.5 flex-shrink-0 " + fileColorClass(file.path)}
-                      />
-                      <span className="truncate">{file.name}</span>
-                    </button>
-                  </li>
-                ))}
-
-                {!loadingRepo && Array.from(groups.entries()).map(([directory, dirFiles]) => {
-                  const isOpen = expandedDirs.has(directory);
-                  return (
-                    <li key={directory}>
-                      <button
-                        onClick={() => toggleDir(directory)}
-                        className="flex w-full items-center gap-1 rounded px-1.5 py-1 text-left font-medium text-foreground/90 hover:bg-panel-muted"
-                      >
-                        <IconChevron
-                          className={
-                            "h-3 w-3 flex-shrink-0 transition-transform " +
-                            (isOpen ? "rotate-90" : "")
-                          }
-                        />
-                        {directory}/
-                      </button>
-
-                      {isOpen && (
-                        <ul className="ml-4 mt-0.5 space-y-0.5 border-l border-border pl-2">
-                          {dirFiles.map((file) => (
-                            <li key={file.path}>
-                              <button
-                                onClick={() => toggleFileSelection(file.path)}
-                                title="Click to scope your next question to this file"
-                                className={
-                                  "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors " +
-                                  (selectedFile === file.path
-                                    ? "bg-accent/15 text-accent"
-                                    : "text-foreground/70 hover:bg-panel-muted")
-                                }
-                              >
-                                <IconFile
-                                  className={"h-3.5 w-3.5 flex-shrink-0 " + fileColorClass(file.path)}
-                                />
-                                <span className="truncate">{file.name}</span>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </li>
-                  );
-                })}
-
-                {!loadingRepo && files.length === 0 && (
-                  <li className="px-1.5 py-1 font-sans text-muted-foreground">
-                    No repository loaded
-                  </li>
-                )}
-              </ul>
             </div>
 
             <div className="border-t border-border p-3">

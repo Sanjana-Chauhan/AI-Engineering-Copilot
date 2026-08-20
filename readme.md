@@ -61,21 +61,29 @@ Vector store: **ChromaDB** · Embeddings: **sentence-transformers** (local,
   immediately, then the answer streams token-by-token.
 
 **Frontend**
-- Three-panel layout: repository/file explorer, chat, sources.
-- Local-path or GitHub-URL repository loader with live status.
-- Collapsible file tree, streamed chat bubbles with an animated "thinking"
-  indicator, "New Chat" reset, dark/light theme-aware design system.
+- VS Code/ChatGPT-style layout: a narrow **activity bar** (Files / Chats /
+  Repositories icons) plus a content panel that shows only the active tab,
+  next to the chat pane and the sources panel — new functionality is a new
+  icon + panel, not a redesign of an ever-growing single sidebar.
+- Local-path or GitHub-URL repository loader with live status (lives in the
+  Repositories tab).
+- Collapsible file tree, streamed chat bubbles with a progressive
+  Claude-style status line ("Reading main.py…") that shows only the current
+  step, "New Chat" reset, dark/light theme-aware design system.
  <img width="958" height="473" alt="image" src="https://github.com/user-attachments/assets/55b63c0e-5f3f-4b69-9a90-f730b0c2306a" />
 
-**Persistent, resumable sessions**
-- The last loaded repository and active conversation are saved to
-  `localStorage`; refreshing the page re-runs the same clone/scan/ingest
-  pipeline (all idempotent) and rehydrates the chat instead of losing it.
+**Persistent, browsable history — but never auto-loaded**
+- Opening or refreshing the app always starts blank; nothing loads until
+  you explicitly pick a repository. A repository is only ever ingested/
+  loaded in response to a direct action (Load Repository, or picking one
+  from the Repositories tab) — never silently, on mount or otherwise.
 - A **repository catalog** (SQLite) tracks every repository ever ingested —
-  the sidebar's "Recent Repositories" list lets you reload one with a click.
+  the activity bar's **Repositories** tab lists them and lets you switch
+  with a click (the header badge jumps straight there).
 - A **conversation catalog** (SQLite) tracks every conversation per
-  repository, auto-titled from its first message — the sidebar's "History"
-  list lets you reopen any past conversation for the loaded repository.
+  repository, auto-titled from its first message — the activity bar's
+  **Chats** tab lets you reopen any past conversation for the loaded
+  repository.
 
 ---
 
@@ -354,7 +362,7 @@ All routes are mounted with an `/api` prefix except the two health routes.
 | `GET` | `/api/rag/ask` | One-shot RAG question/answer (non-streaming) |
 | `POST` | `/api/chat` | RAG chat with conversation history (non-streaming) |
 | `POST` | `/api/chat/stream` | Same as above, streamed via Server-Sent Events |
-| `GET` | `/api/chat/{conversation_id}` | Fetch a conversation's full turn history (for resuming) |
+| `GET` | `/api/chat/{conversation_id}` | Fetch a conversation's full turn history (used when reopening one from the Chats tab) |
 | `DELETE` | `/api/chat/{conversation_id}` | Clear a conversation's stored history |
 | `GET` | `/api/repositories` | List every previously ingested repository, most recent first |
 | `GET` | `/api/repositories/{repository_id}/conversations` | List conversations recorded for a repository |
@@ -522,16 +530,18 @@ SQLite database (`data/conversations.db`), keyed by `conversation_id` +
 its old turns are discarded rather than leaking context from the wrong
 repo. Reads are capped to the last 10 turns to bound prompt size.
 
-**Persistence & resume.** Two catalog tables live alongside
-`conversation_turns` in the same SQLite file: `repositories` (upserted on
-every `/api/repository/ingest` call) and `conversations` (upserted on every
-`append_turn`, auto-titled from the first user message). The frontend
-persists the active repository path/URL and `conversation_id` to
-`localStorage`; on load, it re-runs the *exact same* clone/scan/ingest
-pipeline the "Load Repository" button uses — all three steps are already
-idempotent (git `pull --ff-only`, and ChromaDB's ADD/UPDATE/SKIP sync) — so
-resuming never risks skipping past real state to something stale. This is
-also what powers the sidebar's "Recent Repositories" and "History" lists.
+**Repository & conversation catalog, browse-only.** Two catalog tables live
+alongside `conversation_turns` in the same SQLite file: `repositories`
+(upserted on every `/api/repository/ingest` call) and `conversations`
+(upserted on every `append_turn`, auto-titled from the first user message).
+These back the activity bar's **Repositories** and **Chats** tabs so past
+work is never lost — but nothing from them is ever loaded automatically.
+An earlier version auto-resumed the last repository/conversation from
+`localStorage` on every page open; that was removed because a silent
+background load (with an empty-looking input box) read as broken rather
+than helpful. Picking anything from either tab, or the Load Repository
+button, is always an explicit click — the app never guesses what you want
+loaded next.
 
 ---
 
@@ -563,10 +573,11 @@ SSE streaming, redesigned 3-panel UI with light/dark theming, Markdown
 rendering in chat, repository/file-scoped chat, code explanation workflow,
 debugging workflow (stack-trace-aware retrieval), AI tool calling
 (search_code / get_file_content / list_repository_files, available to the
-model during regular chat), resume-on-refresh (repository + conversation
-persisted to `localStorage`), and a browsable repository/conversation
-catalog (sidebar "Recent Repositories" + "History" lists, backed by new
-SQLite tables).
+model during regular chat), a browsable repository/conversation catalog
+(activity-bar Repositories + Chats tabs, backed by new SQLite tables,
+always explicitly opened rather than auto-loaded), and a VS Code/ChatGPT-
+style activity-bar sidebar (Files / Chats / Repositories) replacing the
+single ever-growing sidebar.
 
 **Next:**
 - Delete/cleanup action for old repositories and conversations (the catalog
