@@ -257,6 +257,8 @@ AI-Engineering-Copilot/
 | Markdown rendering | `react-markdown` + `remark-gfm` |
 | Conversation storage | SQLite (`sqlite3`, stdlib — no extra dependency) |
 | Repository access | Git CLI (shallow clone for GitHub URLs) |
+| Code chunking | `tree-sitter` + `tree-sitter-language-pack` (AST-aware for Python/JS/TS; fixed-line fallback elsewhere) |
+| Keyword search | `rank-bm25` (BM25Okapi, in-memory per query), fused with vector search via Reciprocal Rank Fusion |
 
 ---
 
@@ -505,9 +507,35 @@ call internally — capped to the last 10 turns, same as live chat.
 ## Core Concepts
 
 **Why chunking + hashing.** Sending an entire repository to an LLM is
-neither cheap nor accurate. Splitting files into fixed-size chunks and
-hashing each one means re-ingesting a repo only touches what actually
-changed — unchanged files cost nothing on repeat ingestion.
+neither cheap nor accurate. Splitting files into chunks and hashing each
+one means re-ingesting a repo only touches what actually changed —
+unchanged files cost nothing on repeat ingestion.
+
+**Chunking strategy.** For Python/JavaScript/TypeScript, `code_service`
+parses each file with `tree-sitter` and chunks at function/class/method
+boundaries instead of fixed line counts — a function is never split
+across two chunks, and each method chunk is prefixed with which class it
+belongs to. An outlier-huge definition (rare, but real — see
+[INTERVIEW_PREP.md](INTERVIEW_PREP.md)) still falls back to bounded
+sub-chunks past `MAX_AST_CHUNK_LINES`, since the embedding model has a
+256-token window regardless of how the text is chunked. Every other
+currently supported language uses the original fixed-line chunker.
+
+**Hybrid search (BM25 + vectors, fused with RRF).** Pure vector search
+ranks by *meaning*, so an exact identifier (`getUserById`) can be
+outranked by a semantically-similar-but-differently-named function.
+`search_service.search_code()`'s semantic path now runs a BM25 keyword
+ranking (over every non-doc chunk in the repository, `rank-bm25`)
+alongside the existing vector ranking, then fuses the two with
+Reciprocal Rank Fusion — a chunk ranking well in *either* list scores
+decently, ranking well in *both* scores best. The tokenizer splits
+identifiers at case/underscore boundaries (`getUserById` → `get`,
+`user`, `by`, `id`) specifically so a camelCase query still matches
+snake_case code and vice versa — verified directly, since the naive
+whole-identifier version silently scored zero overlap on exactly that
+case. Fused results no longer carry a single meaningful distance score
+(two ranking systems, not one), so their `score` is `None`; file-scoped
+search and the doc-backfill logic are unchanged.
 
 **Why `repository_id`.** ChromaDB stores every ingested repository's chunks
 in a single collection. Every query filters by `repository_id`, so two
@@ -561,6 +589,29 @@ loaded next.
   it uses the browser's native `confirm()` dialog and is a hard, immediate
   delete; fine for a single local user, but a production version would use
   a themed confirmation and possibly a short undo window.
+- **AST-based chunking only covers Python, JavaScript, and TypeScript** —
+  every other currently supported language (Java, C++, C, C#, Go, Rust)
+  still uses fixed-line chunking. Extending it means verifying real
+  tree-sitter node-type names against real code in that language first
+  (see [INTERVIEW_PREP.md](INTERVIEW_PREP.md)), not guessing from grammar
+  docs — deliberately not done yet for languages we can't test here.
+- **Re-ingesting an already-indexed repo is needed to get AST chunking's
+  benefit on it** — the delete-sync logic already prunes old chunks and
+  adds new ones automatically, but a repo indexed before this change keeps
+  its old fixed-line chunks until the next ingest.
+- **Hybrid search rebuilds its BM25 index from scratch on every query** —
+  `_fetch_code_chunk_corpus` pulls every non-doc chunk for the repository
+  into memory each time `search_code()` runs its semantic path. Fine at
+  this app's scale (one repo loaded at a time, hundreds to low-thousands
+  of chunks); a persistent per-repository keyword index (rebuilt only on
+  ingest, not per question) is the natural next step before this would
+  hold up against a large monorepo.
+- **Fused search results have no display score** — `score` is `None` for
+  anything that went through hybrid fusion, since there's no longer a
+  single meaningful distance once two ranking systems are blended. The
+  Sources panel already handles a missing score gracefully; a production
+  version might show a normalized 0-1 confidence or a "matched by
+  keyword/meaning" badge instead.
 
 ---
 
@@ -578,22 +629,29 @@ model during regular chat), a browsable repository/conversation catalog
 (activity-bar Repositories + Chats tabs, backed by new SQLite tables,
 always explicitly opened rather than auto-loaded), a VS Code/ChatGPT-style
 activity-bar sidebar (Files / Chats / Repositories) replacing the single
-ever-growing sidebar, and **delete for repositories and conversations**
+ever-growing sidebar, **delete for repositories and conversations**
 (`DELETE /api/repositories/{id}` and `DELETE /api/chat/{id}`, each
 cleaning up its SQLite rows *and*, for repositories, the matching ChromaDB
-vectors — wired to a trash icon in both the Repositories and Chats tabs).
+vectors — wired to a trash icon in both the Repositories and Chats tabs),
+**AST-based chunking** (tree-sitter) for Python/JavaScript/TypeScript —
+chunks now follow function/class/method boundaries instead of fixed
+50-line blocks, with per-method class context and a size cap so an
+outlier-huge function still gets bounded sub-chunks (see
+[INTERVIEW_PREP.md](INTERVIEW_PREP.md) for why). Every other currently
+supported language still uses fixed-line chunking as a fallback.
+
+**Hybrid search** — `search_code`'s semantic path now fuses a BM25
+keyword ranking with the vector ranking via Reciprocal Rank Fusion, with
+identifier-aware tokenization (`getUserById` and `get_user_by_id` are
+recognized as the same underlying words) so an exact identifier match
+isn't lost to pure semantic ranking. File-scoped search and the doc
+backfill logic are unchanged.
 
 **Next — tackled one at a time, in this order:**
 
-1. **Retrieval quality** — the highest-leverage group; per-item detail
-   plus the *why* lives in [INTERVIEW_PREP.md](INTERVIEW_PREP.md):
-   - **AST-based chunking** (tree-sitter) — fixed 50-line chunks routinely
-     split a function across two chunks or glue an unrelated import onto a
-     class body; chunk by function/class/method boundary per language
-     instead.
-   - **Hybrid search** — fuse BM25/keyword search with vector search
-     (Reciprocal Rank Fusion), so exact-identifier queries
-     (`getUserById`, `EMAMI_733`) aren't missed by pure semantic search.
+1. **Retrieval quality, continued** — AST chunking and hybrid search
+   (above) were the first two of four; the rest, with the *why* in
+   [INTERVIEW_PREP.md](INTERVIEW_PREP.md):
    - **Reranking** — retrieve top-50, rerank with a cross-encoder
      (`bge-reranker-v2`, or Cohere Rerank), keep top-5.
    - **Query rewriting / HyDE** — expand a vague question ("how does auth
