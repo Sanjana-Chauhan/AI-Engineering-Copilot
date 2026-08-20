@@ -47,6 +47,14 @@ def upsert_repository(
             )
 
 
+def delete_repository(repository_id: str) -> None:
+    with _connect() as connection:
+        connection.execute(
+            "DELETE FROM repositories WHERE repository_id = ?",
+            (repository_id,)
+        )
+
+
 def list_repositories() -> list[dict]:
     with _connect() as connection:
         rows = connection.execute(

@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException
 
 from app.services import conversation_service
-from app.services.repository_catalog_service import list_repositories
+from app.services.repository_catalog_service import delete_repository, list_repositories
 from app.services.repository_service import clone_github_repository, scan_repository
+from app.services.vector_store import delete_repository_chunks
 
 
 router = APIRouter(prefix="/api/repository")
@@ -54,3 +55,11 @@ def list_previously_ingested_repositories():
 @catalog_router.get("/{repository_id}/conversations")
 def list_conversations_for_repository(repository_id: str):
     return {"conversations": conversation_service.list_conversations(repository_id)}
+
+
+@catalog_router.delete("/{repository_id}")
+def delete_repository_and_its_data(repository_id: str):
+    conversation_service.delete_conversations_for_repository(repository_id)
+    delete_repository_chunks(repository_id)
+    delete_repository(repository_id)
+    return {"repository_id": repository_id, "deleted": True}

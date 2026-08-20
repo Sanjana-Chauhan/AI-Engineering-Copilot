@@ -349,6 +349,25 @@ function IconLayers({ className }: { className?: string }) {
   );
 }
 
+function IconTrash({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M4 7h16" />
+      <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
+      <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
 interface SseEvent {
   event: string;
   data: string;
@@ -754,6 +773,48 @@ export default function Home() {
     }
   }
 
+  async function deleteRepository(entry: RepositoryCatalogEntry) {
+    const isActiveRepo = entry.repository_id === repositoryId;
+
+    if (
+      !window.confirm(
+        `Delete "${entry.label}"? This removes its indexed code and all of its ` +
+          "saved conversations. This can't be undone."
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/repositories/${entry.repository_id}`,
+        { method: "DELETE" }
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to delete that repository.");
+      }
+
+      if (isActiveRepo) {
+        setRepositoryId(null);
+        setRepositoryLabel(null);
+        setFiles([]);
+        setSelectedFile(null);
+        setExpandedDirs(new Set());
+        setMessages([]);
+        setSources([]);
+        setConversationId(null);
+        setConversationHistory([]);
+      }
+
+      loadRecentRepositories();
+    } catch (error) {
+      setRepoError(
+        error instanceof Error ? error.message : "Could not delete that repository."
+      );
+    }
+  }
+
   async function openConversation(entry: ConversationCatalogEntry) {
     if (!repositoryId || sending || entry.conversation_id === conversationId) {
       return;
@@ -779,6 +840,40 @@ export default function Home() {
     } catch (error) {
       setRepoError(
         error instanceof Error ? error.message : "Could not load that conversation."
+      );
+    }
+  }
+
+  async function deleteConversation(entry: ConversationCatalogEntry) {
+    if (
+      !window.confirm(
+        `Delete "${entry.title ?? "this conversation"}"? This can't be undone.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/chat/${entry.conversation_id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to delete that conversation.");
+      }
+
+      if (entry.conversation_id === conversationId) {
+        setMessages([]);
+        setSources([]);
+        setConversationId(null);
+      }
+
+      if (repositoryId) {
+        loadConversationHistory(repositoryId);
+      }
+    } catch (error) {
+      setRepoError(
+        error instanceof Error ? error.message : "Could not delete that conversation."
       );
     }
   }
@@ -1195,6 +1290,10 @@ export default function Home() {
                     Chats
                   </h2>
 
+                  {repoError && (
+                    <p className="mt-3 text-xs text-red-500">{repoError}</p>
+                  )}
+
                   {!repositoryId && (
                     <p className="mt-3 text-xs text-muted-foreground">
                       Load a repository to see its conversation history.
@@ -1210,19 +1309,27 @@ export default function Home() {
                   {repositoryId && conversationHistory.length > 0 && (
                     <ul className="mt-3 space-y-0.5 text-xs">
                       {conversationHistory.map((entry) => (
-                        <li key={entry.conversation_id}>
+                        <li key={entry.conversation_id} className="flex items-center gap-1">
                           <button
                             onClick={() => openConversation(entry)}
                             disabled={sending}
                             title={entry.title ?? "Untitled conversation"}
                             className={
-                              "flex w-full items-center truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
+                              "flex flex-1 items-center truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
                               (entry.conversation_id === conversationId
                                 ? "bg-accent/15 text-accent"
                                 : "text-foreground/85 hover:bg-panel-muted")
                             }
                           >
                             <span className="truncate">{entry.title ?? "Untitled conversation"}</span>
+                          </button>
+                          <button
+                            onClick={() => deleteConversation(entry)}
+                            title="Delete this conversation"
+                            aria-label="Delete this conversation"
+                            className="flex-shrink-0 rounded p-1 text-muted-foreground/70 transition-colors hover:bg-panel-muted hover:text-red-500"
+                          >
+                            <IconTrash className="h-3.5 w-3.5" />
                           </button>
                         </li>
                       ))}
@@ -1327,13 +1434,13 @@ export default function Home() {
                     )}
 
                     {recentRepositories.map((entry) => (
-                      <li key={entry.repository_id}>
+                      <li key={entry.repository_id} className="flex items-center gap-1">
                         <button
                           onClick={() => selectRecentRepository(entry)}
                           disabled={loadingRepo}
                           title={entry.path_or_url}
                           className={
-                            "flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
+                            "flex flex-1 items-center gap-1.5 truncate rounded px-1.5 py-1 text-left transition-colors disabled:opacity-50 " +
                             (entry.repository_id === repositoryId
                               ? "bg-accent/15 text-accent"
                               : "text-foreground/85 hover:bg-panel-muted")
@@ -1346,6 +1453,15 @@ export default function Home() {
                           {entry.repository_id === repositoryId && (
                             <span className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
                           )}
+                        </button>
+                        <button
+                          onClick={() => deleteRepository(entry)}
+                          disabled={loadingRepo}
+                          title="Delete this repository"
+                          aria-label="Delete this repository"
+                          className="flex-shrink-0 rounded p-1 text-muted-foreground/70 transition-colors hover:bg-panel-muted hover:text-red-500 disabled:opacity-50"
+                        >
+                          <IconTrash className="h-3.5 w-3.5" />
                         </button>
                       </li>
                     ))}

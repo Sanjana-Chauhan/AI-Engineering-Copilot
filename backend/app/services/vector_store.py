@@ -24,6 +24,10 @@ collection = client.get_or_create_collection(
 )
 
 
+def delete_repository_chunks(repository_id: str) -> None:
+    collection.delete(where={"repository_id": repository_id})
+
+
 def _prune_orphaned_chunks(repository_id: str, current_ids: set[str]) -> int:
 
     existing = collection.get(

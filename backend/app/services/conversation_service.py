@@ -169,3 +169,15 @@ def clear_conversation(conversation_id: str) -> None:
             "DELETE FROM conversations WHERE conversation_id = ?",
             (conversation_id,)
         )
+
+
+def delete_conversations_for_repository(repository_id: str) -> None:
+    with _connect() as connection:
+        connection.execute(
+            "DELETE FROM conversation_turns WHERE repository_id = ?",
+            (repository_id,)
+        )
+        connection.execute(
+            "DELETE FROM conversations WHERE repository_id = ?",
+            (repository_id,)
+        )

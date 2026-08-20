@@ -366,6 +366,7 @@ All routes are mounted with an `/api` prefix except the two health routes.
 | `DELETE` | `/api/chat/{conversation_id}` | Clear a conversation's stored history |
 | `GET` | `/api/repositories` | List every previously ingested repository, most recent first |
 | `GET` | `/api/repositories/{repository_id}/conversations` | List conversations recorded for a repository |
+| `DELETE` | `/api/repositories/{repository_id}` | Delete a repository: its catalog row, its ChromaDB vectors, and all of its conversations |
 
 ### `GET /api/repository/scan`
 
@@ -556,10 +557,10 @@ loaded next.
   shell where the venv wasn't (re-)activated), imports like `google.genai`
   will fail even though `requirements.txt` lists them correctly. See
   [Getting Started](#getting-started) and Interview Prep problem #10.
-- **No cleanup for the repository/conversation catalog** — every ingested
-  repository and every conversation is kept forever (`repositories` and
-  `conversations` tables in `data/conversations.db`); there's no delete
-  action or expiry yet, so storage grows unbounded over long-term use.
+- **Repository/conversation delete has no confirmation styling or undo** —
+  it uses the browser's native `confirm()` dialog and is a hard, immediate
+  delete; fine for a single local user, but a production version would use
+  a themed confirmation and possibly a short undo window.
 
 ---
 
@@ -575,11 +576,57 @@ debugging workflow (stack-trace-aware retrieval), AI tool calling
 (search_code / get_file_content / list_repository_files, available to the
 model during regular chat), a browsable repository/conversation catalog
 (activity-bar Repositories + Chats tabs, backed by new SQLite tables,
-always explicitly opened rather than auto-loaded), and a VS Code/ChatGPT-
-style activity-bar sidebar (Files / Chats / Repositories) replacing the
-single ever-growing sidebar.
+always explicitly opened rather than auto-loaded), a VS Code/ChatGPT-style
+activity-bar sidebar (Files / Chats / Repositories) replacing the single
+ever-growing sidebar, and **delete for repositories and conversations**
+(`DELETE /api/repositories/{id}` and `DELETE /api/chat/{id}`, each
+cleaning up its SQLite rows *and*, for repositories, the matching ChromaDB
+vectors — wired to a trash icon in both the Repositories and Chats tabs).
 
-**Next:**
-- Delete/cleanup action for old repositories and conversations (the catalog
-  currently only grows)
-- Automated tests
+**Next — tackled one at a time, in this order:**
+
+1. **Retrieval quality** — the highest-leverage group; per-item detail
+   plus the *why* lives in [INTERVIEW_PREP.md](INTERVIEW_PREP.md):
+   - **AST-based chunking** (tree-sitter) — fixed 50-line chunks routinely
+     split a function across two chunks or glue an unrelated import onto a
+     class body; chunk by function/class/method boundary per language
+     instead.
+   - **Hybrid search** — fuse BM25/keyword search with vector search
+     (Reciprocal Rank Fusion), so exact-identifier queries
+     (`getUserById`, `EMAMI_733`) aren't missed by pure semantic search.
+   - **Reranking** — retrieve top-50, rerank with a cross-encoder
+     (`bge-reranker-v2`, or Cohere Rerank), keep top-5.
+   - **Query rewriting / HyDE** — expand a vague question ("how does auth
+     work here?") or generate a hypothetical answer snippet before
+     embedding, to retrieve better on underspecified queries.
+
+2. **Git-aware ingestion** — store commit SHA, author, and blame per
+   chunk, enabling "who wrote this and why?" and "what changed in the auth
+   module last month?" (Delete-pruning on re-ingest is already done —
+   this is the next layer on top of ingestion, not a repeat of that.)
+
+3. **Code graph** — build a call graph and import graph (tree-sitter
+   again) to answer "what breaks if I change this function?"
+
+4. **Evaluations** — curate 30–50 question/answer pairs per repo, track
+   precision@k and answer faithfulness on every change, so retrieval/
+   prompt changes get a real signal instead of "looks fine to me."
+
+5. **Agentic + demo-facing extensions:**
+   - **Agentic retrieval** — instead of one retrieval pass, let the model
+     iteratively pull more context (follow an import, fetch a caller) —
+     LangGraph or a small custom loop.
+   - **PR review mode** — point it at a diff; it reviews the change using
+     retrieved context from the rest of the repo.
+   - **Local-model fallback via Ollama** — "works offline / private" as a
+     real feature, not just a claim.
+   - **Observability** (Langfuse/LangSmith) — trace and debug bad
+     retrievals instead of guessing.
+
+**If we only get to three: AST chunking, hybrid search + reranking, and
+evaluations.** Those three are what separate "cool demo" from "understands
+production RAG" — everything else builds on having those first.
+
+**Also still open:** automated tests (`pytest`/integration/frontend) — a
+different concern from evaluations above (code correctness vs. answer
+quality); both are missing today.
